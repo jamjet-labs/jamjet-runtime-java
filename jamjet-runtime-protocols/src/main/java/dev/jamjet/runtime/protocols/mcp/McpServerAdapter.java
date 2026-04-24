@@ -260,7 +260,7 @@ public final class McpServerAdapter implements ProtocolAdapter {
         ExecutionId execId = parseExecutionId(args, "execution_id");
         String nodeId      = requireString(args, "node_id");
         String decisionStr = requireString(args, "decision");
-        ApprovalDecision decision = ApprovalDecision.valueOf(decisionStr.toUpperCase());
+        ApprovalDecision decision = ApprovalDecision.fromValue(decisionStr.toLowerCase(java.util.Locale.ROOT));
 
         String userId   = args.has("user_id")  ? args.get("user_id").asText()  : "system";
         String comment  = args.has("comment")  ? args.get("comment").asText()  : null;
@@ -311,13 +311,16 @@ public final class McpServerAdapter implements ProtocolAdapter {
 
     private static ExecutionId parseExecutionId(JsonNode args, String field) {
         String raw = requireString(args, field);
-        // Accept both "exec_<hex>" and plain UUID strings
+        // Accept both "exec_<hex32>" and plain UUID strings
         if (raw.startsWith("exec_")) {
-            raw = raw.substring(5); // strip "exec_" prefix
-            // re-insert dashes: 8-4-4-4-12
-            raw = raw.replaceFirst(
-                    "(\\w{8})(\\w{4})(\\w{4})(\\w{4})(\\w{12})",
-                    "$1-$2-$3-$4-$5");
+            String hex = raw.substring(5);
+            if (hex.length() != 32 || !hex.chars().allMatch(c -> "0123456789abcdef".indexOf(c) >= 0)) {
+                throw new IllegalArgumentException("Invalid execution ID format: " + raw);
+            }
+            // Re-insert dashes: 8-4-4-4-12
+            String uuid = hex.substring(0, 8) + "-" + hex.substring(8, 12) + "-"
+                    + hex.substring(12, 16) + "-" + hex.substring(16, 20) + "-" + hex.substring(20);
+            return ExecutionId.fromString(uuid);
         }
         return ExecutionId.fromString(raw);
     }
