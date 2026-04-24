@@ -1,1 +1,13 @@
 target/
+*.class
+*.jar
+*.log
+.idea/
+*.iml
+.DS_Store
+.env
+.claude/
+docs/superpowers/
+CLAUDE.md
+progress-tracker.md
+REQUIREMENTS.md
