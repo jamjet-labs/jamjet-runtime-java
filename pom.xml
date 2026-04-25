@@ -6,11 +6,40 @@
 
     <groupId>dev.jamjet</groupId>
     <artifactId>jamjet-runtime-java-parent</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>0.1.0</version>
     <packaging>pom</packaging>
 
     <name>JamJet Runtime Java</name>
-    <description>Pure-Java agent runtime for JamJet</description>
+    <description>Pure-Java agent runtime for JamJet — durable execution, crash recovery, MCP native, no sidecar</description>
+    <url>https://github.com/jamjet-labs/jamjet-runtime-java</url>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0</url>
+        </license>
+    </licenses>
+
+    <organization>
+        <name>JamJet Labs</name>
+        <url>https://jamjet.dev</url>
+    </organization>
+
+    <developers>
+        <developer>
+            <id>sdev</id>
+            <name>Sunil Prakash</name>
+            <email>hello@jamjet.dev</email>
+            <organization>JamJet Labs</organization>
+            <organizationUrl>https://jamjet.dev</organizationUrl>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:git://github.com/jamjet-labs/jamjet-runtime-java.git</connection>
+        <developerConnection>scm:git:ssh://github.com:jamjet-labs/jamjet-runtime-java.git</developerConnection>
+        <url>https://github.com/jamjet-labs/jamjet-runtime-java</url>
+    </scm>
 
     <modules>
         <module>jamjet-runtime-core</module>
@@ -109,5 +138,54 @@
                 </plugin>
             </plugins>
         </pluginManagement>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <execution>
+                        <id>attach-sources</id>
+                        <goals><goal>jar-no-fork</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <version>3.8.0</version>
+                <configuration>
+                    <doclint>none</doclint>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>attach-javadocs</id>
+                        <goals><goal>jar</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-gpg-plugin</artifactId>
+                <version>3.2.4</version>
+                <executions>
+                    <execution>
+                        <id>sign-artifacts</id>
+                        <phase>verify</phase>
+                        <goals><goal>sign</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.sonatype.central</groupId>
+                <artifactId>central-publishing-maven-plugin</artifactId>
+                <version>0.6.0</version>
+                <extensions>true</extensions>
+                <configuration>
+                    <publishingServerId>central</publishingServerId>
+                    <autoPublish>true</autoPublish>
+                </configuration>
+            </plugin>
+        </plugins>
     </build>
 </project>
