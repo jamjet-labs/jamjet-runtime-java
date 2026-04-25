@@ -27,8 +27,8 @@
         <!-- JamJet embedded runtime — pulls in all runtime modules transitively -->
         <dependency>
             <groupId>dev.jamjet</groupId>
-            <artifactId>jamjet-spring-boot-starter</artifactId>
-            <version>0.1.0-SNAPSHOT</version>
+            <artifactId>jamjet-runtime-spring-boot-starter</artifactId>
+            <version>0.1.0</version>
         </dependency>
 
         <dependency>

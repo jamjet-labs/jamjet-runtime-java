@@ -10,8 +10,9 @@
         <version>0.1.0</version>
     </parent>
 
-    <artifactId>jamjet-spring-boot-starter</artifactId>
-    <name>JamJet Spring Boot Starter</name>
+    <artifactId>jamjet-runtime-spring-boot-starter</artifactId>
+    <name>JamJet Runtime Spring Boot Starter</name>
+    <description>Spring Boot auto-configuration that embeds the JamJet Java runtime — no sidecar required</description>
 
     <dependencyManagement>
         <dependencies>
