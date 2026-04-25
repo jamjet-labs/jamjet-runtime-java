@@ -3,6 +3,7 @@ package dev.jamjet.runtime.server;
 import dev.jamjet.runtime.core.JamjetJson;
 import dev.jamjet.runtime.core.state.InMemoryStateBackend;
 import dev.jamjet.runtime.core.state.StateBackend;
+import dev.jamjet.runtime.core.state.StateBackendException;
 import io.javalin.Javalin;
 import io.javalin.json.JavalinJackson;
 import org.slf4j.Logger;
@@ -35,6 +36,14 @@ public class JamjetServer {
         });
 
         // Exception handlers
+        app.exception(StateBackendException.class, (e, ctx) -> {
+            int status = switch (e.getKind()) {
+                case NOT_FOUND -> 404;
+                case SEQUENCE_CONFLICT -> 409;
+                case DATABASE, SERIALIZATION -> 500;
+            };
+            ctx.status(status).json(new ErrorResponse(e.getMessage()));
+        });
         app.exception(IllegalArgumentException.class, (e, ctx) -> {
             ctx.status(400).json(new ErrorResponse(e.getMessage()));
         });

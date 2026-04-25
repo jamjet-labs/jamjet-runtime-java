@@ -100,7 +100,7 @@ public class ExecutionRoutes {
             }
 
             backend.updateExecutionStatus(executionId, WorkflowStatus.CANCELLED);
-            ctx.json(backend.getExecution(executionId).get());
+            ctx.json(backend.getExecution(executionId).orElse(existing.get()));
         });
 
         // GET /executions/{id}/events — get event log
