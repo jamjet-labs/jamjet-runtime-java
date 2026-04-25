@@ -36,6 +36,7 @@
         <hikaricp.version>5.1.0</hikaricp.version>
         <javalin.version>6.3.0</javalin.version>
         <bytebuddy.version>1.15.10</bytebuddy.version>
+        <spring-boot.version>3.3.5</spring-boot.version>
     </properties>
 
     <dependencyManagement>
@@ -84,6 +85,8 @@
                 <artifactId>assertj-core</artifactId>
                 <version>${assertj.version}</version>
             </dependency>
+            <!-- Spring Boot BOM is imported only in jamjet-spring-boot-starter, not here,
+                 to avoid Jetty version conflicts with jamjet-runtime-server (Javalin). -->
         </dependencies>
     </dependencyManagement>
 
