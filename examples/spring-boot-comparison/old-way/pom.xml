@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.3.5</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>dev.jamjet.examples</groupId>
+    <artifactId>spring-boot-old-way</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+
+    <name>JamJet Spring Boot — Old Way (REST sidecar)</name>
+    <description>Spring Boot agent calling a Rust sidecar over REST — reference only, requires Docker + Rust sidecar to run</description>
+
+    <properties>
+        <java.version>21</java.version>
+    </properties>
+
+    <!--
+        NOTE: This is a REFERENCE project. It does NOT compile out-of-the-box because it
+        depends on dev.jamjet:jamjet-spring-boot-autoconfigure:0.1.2 from Maven Central,
+        which requires a running Rust sidecar to actually function.
+
+        To run:
+          1. Start the Rust sidecar: docker run -p 7474:7474 ghcr.io/jamjet-labs/jamjet-server:latest
+          2. mvn spring-boot:run
+
+        The purpose of this project is to show what the old integration pattern looks like
+        compared to the new-way (embedded runtime) approach.
+    -->
+
+    <dependencies>
+        <!--
+            Old way: the published Maven Central starter (0.1.2) that proxies everything
+            through a REST sidecar. Compare with new-way/pom.xml which uses the embedded
+            starter (0.1.0-SNAPSHOT) that bundles the runtime directly.
+        -->
+        <dependency>
+            <groupId>dev.jamjet</groupId>
+            <artifactId>jamjet-spring-boot-autoconfigure</artifactId>
+            <version>0.1.2</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

@@ -1,0 +1,8 @@
+jamjet:
+  runtime-url: http://localhost:7474
+  durability:
+    enabled: true
+    storage: postgres
+  timeouts:
+    connect-ms: 5000
+    read-ms: 30000
