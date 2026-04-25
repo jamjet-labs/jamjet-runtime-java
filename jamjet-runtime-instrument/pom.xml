@@ -68,6 +68,7 @@
                     <archive>
                         <manifestEntries>
                             <Premain-Class>dev.jamjet.runtime.instrument.JamjetAgent</Premain-Class>
+                            <Agent-Class>dev.jamjet.runtime.instrument.JamjetAgent</Agent-Class>
                             <Can-Retransform-Classes>true</Can-Retransform-Classes>
                         </manifestEntries>
                     </archive>

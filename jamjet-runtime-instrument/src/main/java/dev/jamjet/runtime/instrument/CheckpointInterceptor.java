@@ -52,7 +52,7 @@ public final class CheckpointInterceptor {
             return null;
         }
         String checkpointId = resolveCheckpointId(method);
-        if (ctx.isReplayMode() && ctx.getRecordedResult(checkpointId) != null) {
+        if (ctx.isReplayMode() && ctx.getCheckpointIds().contains(checkpointId)) {
             Object cached = ctx.getRecordedResult(checkpointId);
             SKIP_VALUE.set(cached);
             // return non-null sentinel to trigger skipOn
@@ -72,7 +72,7 @@ public final class CheckpointInterceptor {
      * @param returned  the value returned by the method body (writable)
      * @param skipped   the value returned by the enter advice ({@code null} means normal exit)
      */
-    @Advice.OnMethodExit
+    @Advice.OnMethodExit(onThrowable = Throwable.class)
     public static void onExit(
             @Advice.Origin Method method,
             @Advice.Return(readOnly = false, typing = Assigner.Typing.DYNAMIC) Object returned,
