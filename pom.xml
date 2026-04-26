@@ -48,6 +48,7 @@
         <module>jamjet-runtime-plugins</module>
         <module>jamjet-runtime-server</module>
         <module>jamjet-spring-boot-starter</module>
+        <module>jamjet-cloud-sdk</module>
     </modules>
 
     <properties>
