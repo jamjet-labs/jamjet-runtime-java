@@ -11,3 +11,7 @@ docs/superpowers/
 CLAUDE.md
 progress-tracker.md
 REQUIREMENTS.md
+
+# Local AI/editor agent config — never commit Claude/skill artifacts
+.superpowers/
+.worktrees/
