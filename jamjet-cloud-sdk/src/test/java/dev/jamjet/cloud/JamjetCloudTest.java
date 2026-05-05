@@ -61,4 +61,18 @@ class JamjetCloudTest {
                 .build());
         assertTrue(true);
     }
+
+    @Test
+    void payloadSerializesIntoEventMap() {
+        JamjetCloud.configure(JamjetCloudConfig.builder()
+                .apiKey("jj_test")
+                .apiUrl("http://127.0.0.1:1")
+                .project("test")
+                .build());
+        Span s = JamjetCloud.newSpan("llm_call", "openai.gpt-4o");
+        s.payload(java.util.Map.of("messages", java.util.List.of("hi")));
+        java.util.Map<String, Object> event = s.toEventMap();
+        assertEquals(java.util.List.of("hi"), ((java.util.Map<?,?>) event.get("payload")).get("messages"));
+        s.finish();
+    }
 }
