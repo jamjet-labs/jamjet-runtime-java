@@ -110,7 +110,8 @@ public final class JamjetCloud {
         return httpClient;
     }
 
-    static JamjetCloudConfig config() {
+    /** Public for instrumentation modules outside this package. May return null before configure(). */
+    public static JamjetCloudConfig config() {
         return config;
     }
 
