@@ -35,10 +35,43 @@
             <artifactId>slf4j-api</artifactId>
         </dependency>
 
+        <!-- Micrometer: optional, only needed if user is on Spring AI. -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-observation</artifactId>
+            <version>1.13.6</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- LangChain4j: optional, only needed if user is on LangChain4j. -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-core</artifactId>
+            <version>0.36.2</version>
+            <optional>true</optional>
+        </dependency>
+
         <!-- Test scope -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-observation</artifactId>
+            <version>1.13.6</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-core</artifactId>
+            <version>0.36.2</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
