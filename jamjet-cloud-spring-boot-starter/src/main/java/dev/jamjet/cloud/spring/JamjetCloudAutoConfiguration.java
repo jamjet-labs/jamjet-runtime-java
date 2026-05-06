@@ -46,5 +46,12 @@ public class JamjetCloudAutoConfiguration {
         return new JamjetChatModelListener();
     }
 
+    @Bean
+    @ConditionalOnClass(name = "dev.langchain4j.model.chat.ChatLanguageModel")
+    @ConditionalOnProperty(prefix = "jamjet.cloud", name = "auto-patch", matchIfMissing = true)
+    ChatModelListenerPostProcessor chatModelListenerPostProcessor(JamjetChatModelListener listener) {
+        return new ChatModelListenerPostProcessor(listener);
+    }
+
     public static final class JamjetCloudInitialized {}
 }
