@@ -112,6 +112,57 @@ That is the entire integration. No schema changes, no new infrastructure.
 | `jamjet-runtime-plugins` | ClassLoader-isolated plugin system with ServiceLoader and hot-reload |
 | `jamjet-runtime-server` | Standalone Javalin REST server — same API surface as the Rust runtime |
 | `jamjet-spring-boot-starter` | Spring Boot auto-configuration: embeds the runtime as Spring beans |
+| `jamjet-cloud-sdk` | Drop-in observability for Spring AI / LangChain4j (mirrors Python `jamjet.cloud`) |
+| `jamjet-cloud-spring-boot-starter` | Spring Boot auto-config for the Cloud SDK |
+
+---
+
+## JamJet Cloud SDK
+
+Drop-in observability for Spring AI and LangChain4j agents. Mirrors the Python `jamjet.cloud` SDK.
+
+### Spring Boot
+
+```xml
+<dependency>
+  <groupId>dev.jamjet</groupId>
+  <artifactId>jamjet-cloud-spring-boot-starter</artifactId>
+  <version>0.2.0</version>
+</dependency>
+```
+
+```yaml
+# application.yml
+jamjet:
+  cloud:
+    api-key: ${JJ_API_KEY}
+    project: my-app
+```
+
+That's it. Every Spring AI `ChatClient` / `ChatModel` call and every LangChain4j `ChatLanguageModel` call is captured automatically.
+
+### Plain Java (LangChain4j without Spring)
+
+```xml
+<dependency>
+  <groupId>dev.jamjet</groupId>
+  <artifactId>jamjet-cloud-sdk</artifactId>
+  <version>0.2.0</version>
+</dependency>
+```
+
+```java
+JamjetCloud.configure(JamjetCloudConfig.builder()
+    .apiKey(System.getenv("JJ_API_KEY"))
+    .project("my-app")
+    .build());
+
+var model = OpenAiChatModel.builder()
+    .apiKey(System.getenv("OPENAI_API_KEY"))
+    .modelName("gpt-4o-mini")
+    .listeners(List.of(new JamjetChatModelListener()))
+    .build();
+```
 
 ---
 
