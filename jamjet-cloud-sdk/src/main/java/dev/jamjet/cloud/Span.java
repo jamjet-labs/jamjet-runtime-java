@@ -76,7 +76,7 @@ public final class Span {
         finish("error");
     }
 
-    Map<String, Object> toEventMap() {
+    public Map<String, Object> toEventMap() {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("type", "span");
         m.put("trace_id", traceId);
