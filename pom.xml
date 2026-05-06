@@ -6,7 +6,7 @@
 
     <groupId>dev.jamjet</groupId>
     <artifactId>jamjet-runtime-java-parent</artifactId>
-    <version>0.1.1</version>
+    <version>0.2.0</version>
     <packaging>pom</packaging>
 
     <name>JamJet Runtime Java</name>
@@ -49,6 +49,7 @@
         <module>jamjet-runtime-server</module>
         <module>jamjet-spring-boot-starter</module>
         <module>jamjet-cloud-sdk</module>
+        <module>jamjet-cloud-spring-boot-starter</module>
     </modules>
 
     <properties>
@@ -165,28 +166,38 @@
                     </execution>
                 </executions>
             </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-gpg-plugin</artifactId>
-                <version>3.2.4</version>
-                <executions>
-                    <execution>
-                        <id>sign-artifacts</id>
-                        <phase>verify</phase>
-                        <goals><goal>sign</goal></goals>
-                    </execution>
-                </executions>
-            </plugin>
-            <plugin>
-                <groupId>org.sonatype.central</groupId>
-                <artifactId>central-publishing-maven-plugin</artifactId>
-                <version>0.6.0</version>
-                <extensions>true</extensions>
-                <configuration>
-                    <publishingServerId>central</publishingServerId>
-                    <autoPublish>true</autoPublish>
-                </configuration>
-            </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>3.2.4</version>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals><goal>sign</goal></goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                        <version>0.6.0</version>
+                        <extensions>true</extensions>
+                        <configuration>
+                            <publishingServerId>central</publishingServerId>
+                            <autoPublish>true</autoPublish>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

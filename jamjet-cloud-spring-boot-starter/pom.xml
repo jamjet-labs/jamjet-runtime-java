@@ -10,16 +10,16 @@
         <version>0.2.0</version>
     </parent>
 
-    <artifactId>jamjet-runtime-spring-boot-starter</artifactId>
-    <name>JamJet Runtime Spring Boot Starter</name>
-    <description>Spring Boot auto-configuration that embeds the JamJet Java runtime — no sidecar required</description>
+    <artifactId>jamjet-cloud-spring-boot-starter</artifactId>
+    <name>JamJet Cloud Spring Boot Starter</name>
+    <description>Spring Boot auto-configuration for the JamJet Cloud SDK — drop-in Spring AI / LangChain4j observability</description>
 
     <dependencyManagement>
         <dependencies>
             <dependency>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-dependencies</artifactId>
-                <version>3.3.5</version>
+                <version>${spring-boot.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -27,36 +27,15 @@
     </dependencyManagement>
 
     <dependencies>
-        <!-- Runtime modules -->
         <dependency>
             <groupId>dev.jamjet</groupId>
-            <artifactId>jamjet-runtime-core</artifactId>
-            <version>${project.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>dev.jamjet</groupId>
-            <artifactId>jamjet-runtime-protocols</artifactId>
-            <version>${project.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>dev.jamjet</groupId>
-            <artifactId>jamjet-runtime-plugins</artifactId>
-            <version>${project.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>dev.jamjet</groupId>
-            <artifactId>jamjet-runtime-instrument</artifactId>
+            <artifactId>jamjet-cloud-sdk</artifactId>
             <version>${project.version}</version>
         </dependency>
 
-        <!-- Spring Boot -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -68,10 +47,27 @@
             <optional>true</optional>
         </dependency>
 
-        <!-- Test -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-observation</artifactId>
+            <version>1.13.6</version>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-core</artifactId>
+            <version>0.36.2</version>
+            <optional>true</optional>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

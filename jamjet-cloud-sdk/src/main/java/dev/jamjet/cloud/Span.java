@@ -29,6 +29,7 @@ public final class Span {
     private Double costUsd;
     private String status = "pending";
     private String failureMode;
+    private java.util.Map<String, Object> payload;
 
     Span(String traceId, String spanId, String kind, String name, int sequence,
          String agentName, String agentCardUri) {
@@ -47,6 +48,10 @@ public final class Span {
     public Span inputTokens(long v)     { this.inputTokens = v; return this; }
     public Span outputTokens(long v)    { this.outputTokens = v; return this; }
     public Span costUsd(double v)       { this.costUsd = v; return this; }
+
+    public Span payload(java.util.Map<String, Object> v) { this.payload = v; return this; }
+
+    public java.util.Map<String, Object> payload() { return payload; }
 
     /** Mark the span complete with status="ok" and emit it. */
     public void finish() {
@@ -71,7 +76,7 @@ public final class Span {
         finish("error");
     }
 
-    Map<String, Object> toEventMap() {
+    public Map<String, Object> toEventMap() {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("type", "span");
         m.put("trace_id", traceId);
@@ -89,6 +94,7 @@ public final class Span {
         if (agentName != null) m.put("agent_name", agentName);
         if (agentCardUri != null) m.put("agent_card_uri", agentCardUri);
         if (failureMode != null) m.put("failure_mode", failureMode);
+        if (payload != null) m.put("payload", payload);
         return m;
     }
 
