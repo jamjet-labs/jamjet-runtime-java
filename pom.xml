@@ -49,6 +49,7 @@
         <module>jamjet-runtime-server</module>
         <module>jamjet-spring-boot-starter</module>
         <module>jamjet-cloud-sdk</module>
+        <module>jamjet-cloud-spring-boot-starter</module>
     </modules>
 
     <properties>
