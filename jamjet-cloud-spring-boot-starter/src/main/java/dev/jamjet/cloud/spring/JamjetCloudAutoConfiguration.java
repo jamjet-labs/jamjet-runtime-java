@@ -47,7 +47,7 @@ public class JamjetCloudAutoConfiguration {
     }
 
     @Bean
-    @ConditionalOnClass(name = "dev.langchain4j.model.chat.ChatLanguageModel")
+    @ConditionalOnClass(name = "dev.langchain4j.model.chat.listener.ChatModelListener")
     @ConditionalOnProperty(prefix = "jamjet.cloud", name = "auto-patch", matchIfMissing = true)
     ChatModelListenerPostProcessor chatModelListenerPostProcessor(JamjetChatModelListener listener) {
         return new ChatModelListenerPostProcessor(listener);

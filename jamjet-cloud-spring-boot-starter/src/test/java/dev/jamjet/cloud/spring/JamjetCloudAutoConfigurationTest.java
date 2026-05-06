@@ -44,4 +44,18 @@ class JamjetCloudAutoConfigurationTest {
                     assertThat(ctx).doesNotHaveBean(JamjetChatModelListener.class);
                 });
     }
+
+    @Test
+    void contextStartsWithoutLlmLibsOnClasspath() {
+        runner.withPropertyValues("jamjet.cloud.api-key=jj_test",
+                                   "jamjet.cloud.api-url=http://127.0.0.1:1")
+                .withClassLoader(new org.springframework.boot.test.context.FilteredClassLoader(
+                        io.micrometer.observation.ObservationHandler.class,
+                        dev.langchain4j.model.chat.listener.ChatModelListener.class))
+                .run(ctx -> {
+                    assertThat(JamjetCloud.config()).isNotNull();
+                    assertThat(ctx).doesNotHaveBean(JamjetObservationHandler.class);
+                    assertThat(ctx).doesNotHaveBean(JamjetChatModelListener.class);
+                });
+    }
 }
