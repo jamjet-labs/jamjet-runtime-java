@@ -70,19 +70,19 @@
             <artifactId>engram-spring-boot-starter</artifactId>
             <version>${jamjet-engram.version}</version>
         </dependency>
+        <!-- Cloud SDK directly. We deliberately skip jamjet-cloud-spring-boot-starter 0.2.0
+             because its autoconfig hard-references LangChain4j classes (would force langchain4j-core
+             onto the classpath of every Spring-AI-only app). The demo's JamjetCloudConfiguration
+             does the Spring AI half explicitly — also gives us a cleaner trace registration path. -->
         <dependency>
             <groupId>dev.jamjet</groupId>
-            <artifactId>jamjet-cloud-spring-boot-starter</artifactId>
+            <artifactId>jamjet-cloud-sdk</artifactId>
             <version>${jamjet-cloud.version}</version>
         </dependency>
-        <!-- Workaround: jamjet-cloud-spring-boot-starter 0.2.0 declares langchain4j-core
-             as optional but its autoconfig references ChatModelListener without
-             @ConditionalOnClass protection — pull it in explicitly so the app boots.
-             Filed as upstream followup; remove once the starter is patched. -->
+        <!-- micrometer-observation is optional in jamjet-cloud-sdk; pull it in here so JamjetObservationHandler resolves. -->
         <dependency>
-            <groupId>dev.langchain4j</groupId>
-            <artifactId>langchain4j-core</artifactId>
-            <version>0.36.2</version>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-observation</artifactId>
         </dependency>
 
         <dependency>

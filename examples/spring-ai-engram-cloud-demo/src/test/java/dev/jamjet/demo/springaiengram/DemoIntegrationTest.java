@@ -2,12 +2,10 @@ package dev.jamjet.demo.springaiengram;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.client.WireMock;
-import dev.jamjet.cloud.spring.JamjetCloudAutoConfiguration;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.web.client.RestTemplateBuilder;
@@ -25,9 +23,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @ActiveProfiles("test")
 @Testcontainers
-// JamjetCloudAutoConfiguration 0.2.0 references langchain4j which is not on the test classpath;
-// exclude it to avoid ClassNotFoundException during condition processing.
-@EnableAutoConfiguration(exclude = JamjetCloudAutoConfiguration.class)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class DemoIntegrationTest {
 
