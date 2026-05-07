@@ -1,0 +1,31 @@
+server:
+  address: 127.0.0.1
+  port: 8080
+
+spring:
+  application:
+    name: spring-ai-engram-cloud-demo
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY}
+      chat:
+        options:
+          model: gpt-4o-mini
+
+# Engram Spring Boot starter — autoconfigures EngramClient bound to engram.base-url
+engram:
+  base-url: ${ENGRAM_BASE_URL:http://127.0.0.1:9090}
+
+jamjet:
+  cloud:
+    api-key: ${JAMJET_API_KEY}
+    api-url: ${JAMJET_API_URL:https://api.jamjet.dev}
+
+app:
+  engram:
+    health-url: ${ENGRAM_BASE_URL:http://127.0.0.1:9090}/health
+
+logging:
+  level:
+    org.springframework.ai: INFO
+    dev.jamjet: INFO
