@@ -49,8 +49,41 @@ public class PreflightCheck implements ApplicationRunner {
         }
     }
 
-    void waitForEngram() {
-        // Implementation in Task 5.
+    public void waitForEngram() {
+        waitForEngramWithTimeout(Duration.ofSeconds(30));
+    }
+
+    public void waitForEngramWithTimeout(Duration timeout) {
+        HttpClient client = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(2))
+                .build();
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(engramHealthUrl))
+                .timeout(Duration.ofSeconds(2))
+                .GET()
+                .build();
+
+        long deadlineMs = System.currentTimeMillis() + timeout.toMillis();
+        while (System.currentTimeMillis() < deadlineMs) {
+            try {
+                HttpResponse<Void> resp = client.send(request, HttpResponse.BodyHandlers.discarding());
+                if (resp.statusCode() == 200) {
+                    return;
+                }
+            } catch (Exception ignored) {
+                // retry until deadline
+            }
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Interrupted while waiting for Engram", e);
+            }
+        }
+
+        throw new IllegalStateException(
+                "Engram is not reachable at " + engramHealthUrl + ". " +
+                "Run `docker compose up -d` first.");
     }
 
     private boolean isBlank(String value) {
