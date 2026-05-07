@@ -20,11 +20,19 @@
         <jamjet-cloud.version>0.2.0</jamjet-cloud.version>
         <jamjet-engram.version>0.2.0</jamjet-engram.version>
         <wiremock.version>3.9.1</wiremock.version>
-        <testcontainers.version>1.20.4</testcontainers.version>
+        <testcontainers.version>1.21.3</testcontainers.version>
     </properties>
 
     <dependencyManagement>
         <dependencies>
+            <!-- TC BOM must come before spring-boot-dependencies so our version wins -->
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>testcontainers-bom</artifactId>
+                <version>${testcontainers.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
             <dependency>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-dependencies</artifactId>
@@ -36,13 +44,6 @@
                 <groupId>org.springframework.ai</groupId>
                 <artifactId>spring-ai-bom</artifactId>
                 <version>${spring-ai.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-            <dependency>
-                <groupId>org.testcontainers</groupId>
-                <artifactId>testcontainers-bom</artifactId>
-                <version>${testcontainers.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -98,6 +99,35 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <version>${spring-boot.version}</version>
+            </plugin>
+            <!-- -parameters lets Spring MVC resolve @RequestParam names at runtime -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <compilerArgs>
+                        <arg>-parameters</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
+            <!--
+                OrbStack (Docker 29+) raised the minimum Docker API version to 1.40.
+                Testcontainers ≤1.21.x falls back to docker-java API version 1.32 when the
+                config returns UNKNOWN_VERSION, causing a 400 from OrbStack's daemon.
+                Setting api.version=1.41 as a JVM system property overrides that fallback.
+                Developers on standard Docker Desktop (or CI) are unaffected: the property is
+                ignored when the server accepts all API versions.
+                Also requires ~/.testcontainers.properties:
+                    tc.host=unix:///Users/<you>/.orbstack/run/docker.sock
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <api.version>1.41</api.version>
+                    </systemPropertyVariables>
+                </configuration>
             </plugin>
         </plugins>
     </build>
