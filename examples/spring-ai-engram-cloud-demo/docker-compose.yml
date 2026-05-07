@@ -1,0 +1,24 @@
+services:
+  engram:
+    image: ghcr.io/jamjet-labs/engram-server:0.5.0
+    container_name: engram-demo
+    # No explicit command — all configuration is via environment variables.
+    # "serve" is the default entrypoint; mode=rest and port=9090 are set below.
+    ports:
+      - "127.0.0.1:9090:9090"   # loopback-only — do not expose Engram on the network
+    environment:
+      - ENGRAM_MODE=rest            # default is "mcp" (stdio); must be "rest" for HTTP
+      - ENGRAM_LLM_PROVIDER=mock    # no LLM key needed; mock returns empty facts (demo/dev only)
+      - ENGRAM_EMBEDDING_PROVIDER=mock  # no Ollama needed; mock embeddings (768d, deterministic)
+    volumes:
+      - engram-data:/data           # ENGRAM_DB_PATH defaults to /data/engram.db inside the image
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/health"]
+      interval: 2s
+      timeout: 1s
+      retries: 15
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  engram-data:
