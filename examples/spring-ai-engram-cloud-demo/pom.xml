@@ -69,6 +69,15 @@
             <artifactId>jamjet-cloud-spring-boot-starter</artifactId>
             <version>${jamjet-cloud.version}</version>
         </dependency>
+        <!-- Workaround: jamjet-cloud-spring-boot-starter 0.2.0 declares langchain4j-core
+             as optional but its autoconfig references ChatModelListener without
+             @ConditionalOnClass protection — pull it in explicitly so the app boots.
+             Filed as upstream followup; remove once the starter is patched. -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-core</artifactId>
+            <version>0.36.2</version>
+        </dependency>
 
         <dependency>
             <groupId>org.springframework.boot</groupId>

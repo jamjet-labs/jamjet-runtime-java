@@ -1,5 +1,6 @@
 package dev.jamjet.demo.springaiengram.startup;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
@@ -20,6 +21,7 @@ public class PreflightCheck implements ApplicationRunner {
     private final Map<String, String> env;
     private final String engramHealthUrl;
 
+    @Autowired
     public PreflightCheck(@Value("${app.engram.health-url:http://127.0.0.1:9090/health}") String engramHealthUrl) {
         this(System.getenv(), engramHealthUrl);
     }
