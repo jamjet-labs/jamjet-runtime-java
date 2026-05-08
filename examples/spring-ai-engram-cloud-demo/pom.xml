@@ -17,7 +17,6 @@
         <maven.compiler.release>21</maven.compiler.release>
         <spring-boot.version>3.3.5</spring-boot.version>
         <spring-ai.version>1.0.0</spring-ai.version>
-        <jamjet-cloud.version>0.2.0</jamjet-cloud.version>
         <jamjet-engram.version>0.2.0</jamjet-engram.version>
         <wiremock.version>3.9.1</wiremock.version>
         <testcontainers.version>1.21.3</testcontainers.version>
@@ -55,8 +54,8 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
-        <!-- Required so Micrometer's ObservationRegistry auto-registers JamjetObservationHandler.
-             Without Actuator, the handler bean exists but never receives Spring AI observations. -->
+        <!-- Required for Spring Boot's tracing autoconfig (management.tracing.* +
+             management.otlp.tracing.*). Without actuator the OTLP exporter beans never wire up. -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
@@ -70,19 +69,18 @@
             <artifactId>engram-spring-boot-starter</artifactId>
             <version>${jamjet-engram.version}</version>
         </dependency>
-        <!-- Cloud SDK directly. We deliberately skip jamjet-cloud-spring-boot-starter 0.2.0
-             because its autoconfig hard-references LangChain4j classes (would force langchain4j-core
-             onto the classpath of every Spring-AI-only app). The demo's JamjetCloudConfiguration
-             does the Spring AI half explicitly — also gives us a cleaner trace registration path. -->
-        <dependency>
-            <groupId>dev.jamjet</groupId>
-            <artifactId>jamjet-cloud-sdk</artifactId>
-            <version>${jamjet-cloud.version}</version>
-        </dependency>
-        <!-- micrometer-observation is optional in jamjet-cloud-sdk; pull it in here so JamjetObservationHandler resolves. -->
+        <!-- JamJet Cloud observability via the standard OpenTelemetry path:
+             Spring AI 1.0 emits `gen_ai.client.operation` Micrometer Observations →
+             micrometer-tracing-bridge-otel converts them to OTel spans →
+             opentelemetry-exporter-otlp ships them via OTLP/HTTP-protobuf to JamJet's
+             /v1/otlp/v1/traces intake. No JamJet SDK, no @Configuration, no observation handler. -->
         <dependency>
             <groupId>io.micrometer</groupId>
-            <artifactId>micrometer-observation</artifactId>
+            <artifactId>micrometer-tracing-bridge-otel</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-otlp</artifactId>
         </dependency>
 
         <dependency>

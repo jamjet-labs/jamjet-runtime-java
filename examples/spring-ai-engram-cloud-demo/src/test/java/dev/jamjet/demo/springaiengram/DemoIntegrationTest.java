@@ -69,8 +69,14 @@ class DemoIntegrationTest {
         registry.add("spring.ai.openai.api-key", () -> "sk-test");
         registry.add("engram.base-url",
                 () -> "http://" + engram.getHost() + ":" + engram.getMappedPort(9090));
-        registry.add("jamjet.cloud.api-key", () -> "jk_test");
-        registry.add("jamjet.cloud.api-url", () -> "http://localhost:1");
+        // OTLP exporter: point at a black hole + supply a placeholder bearer
+        // token so Spring's property resolver doesn't trip on the unresolved
+        // ${JAMJET_API_KEY} reference in application.yml. The exporter retries
+        // in the background and won't fail the test if the endpoint is
+        // unreachable; this just prevents accidental traffic to prod.
+        registry.add("management.otlp.tracing.endpoint", () -> "http://127.0.0.1:1/v1/otlp/v1/traces");
+        registry.add("management.otlp.tracing.headers.Authorization", () -> "Bearer jk_test");
+        registry.add("management.tracing.sampling.probability", () -> "0.0");
         registry.add("app.engram.health-url",
                 () -> "http://" + engram.getHost() + ":" + engram.getMappedPort(9090) + "/health");
     }

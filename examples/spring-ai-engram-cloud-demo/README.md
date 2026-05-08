@@ -1,12 +1,12 @@
 # Spring AI + Engram + JamJet Cloud Demo
 
-A multi-turn chat agent that **remembers facts across calls** via [Engram](https://github.com/jamjet-labs/jamjet/tree/main/runtime/engram-server) and is **observed end-to-end** by [JamJet Cloud](https://cloud.jamjet.dev) — drop in three Spring Boot starters, get durable memory + cloud observability for free.
+A multi-turn chat agent that **remembers facts across calls** via [Engram](https://github.com/jamjet-labs/jamjet/tree/main/runtime/engram-server) and is **observed end-to-end** by [JamJet Cloud](https://cloud.jamjet.dev) — using **stock Spring Boot OTLP tracing**, no custom configuration, no JamJet SDK.
 
 ## What this demo shows
 
 - **Spring AI 1.0** chat agent using OpenAI for inference
 - **`dev.jamjet:engram-spring-boot-starter`** autoconfigures `EngramClient` so the agent's `@Tool` methods can record + recall facts against a real Engram server
-- **`dev.jamjet:jamjet-cloud-spring-boot-starter`** auto-instruments every chat call + tool span — no code changes
+- **Standard Spring Boot OTLP tracing** — Spring AI 1.0 emits Micrometer Observations for every chat call and tool call, `micrometer-tracing-bridge-otel` converts them to OTel spans, and `opentelemetry-exporter-otlp` ships them to JamJet's `/v1/otlp/v1/traces` intake. No JamJet `@Configuration`, no JamJet observation handler, just Spring Boot's standard tracing autoconfig.
 - **Cross-platform run flow** — works on macOS, Linux, and Windows with the same `mvnw` + `docker compose` commands
 
 ## How it's wired
@@ -23,7 +23,7 @@ User → POST /chat?session=alice ──→ Spring AI ChatClient
                                                               └─→ Engram REST API (Docker)
 ```
 
-JamJet Cloud's starter watches the whole flow via Spring AI's Micrometer Observation hooks and ships traces + cost rollups to the dashboard. **Zero observability code in your demo.**
+Spring AI's Micrometer Observations → OTel spans → OTLP HTTP exporter → `https://api.jamjet.dev/v1/otlp/v1/traces` with the project key as a bearer token. **All wiring is in `application.yml` — zero Java glue.**
 
 ## Prerequisites
 
@@ -92,7 +92,7 @@ The interesting code is ~120 LOC across 4 files:
 | `ChatController.java` | `POST /chat?session=X` — accepts `text/plain`, returns `{"session","reply"}` |
 | `startup/PreflightCheck.java` | Validates env vars + polls Engram `/health` before the app accepts traffic |
 
-The pom has three starter dependencies. Zero custom plumbing.
+There's no `JamjetCloudConfiguration` or observation handler — observability is pure `application.yml`.
 
 ## Configuration
 
@@ -101,8 +101,9 @@ The pom has three starter dependencies. Zero custom plumbing.
 | `engram.base-url` | `http://127.0.0.1:9090` | Where the autoconfigured `EngramClient` connects |
 | `spring.ai.openai.api-key` | `${OPENAI_API_KEY}` | Spring AI OpenAI key |
 | `spring.ai.openai.chat.options.model` | `gpt-4o-mini` | OpenAI model for chat |
-| `jamjet.cloud.api-key` | `${JAMJET_API_KEY}` | JamJet Cloud project key |
-| `jamjet.cloud.api-url` | `https://api.jamjet.dev` | JamJet Cloud ingest endpoint |
+| `management.otlp.tracing.endpoint` | `${JAMJET_API_URL}/v1/otlp/v1/traces` | OTLP intake URL — defaults to JamJet's hosted intake |
+| `management.otlp.tracing.headers.Authorization` | `Bearer ${JAMJET_API_KEY}` | Per-project bearer token |
+| `management.tracing.sampling.probability` | `1.0` | Sample every chat trace (lower for prod) |
 
 To swap the chat model (e.g. to `gpt-4o`), edit `application.yml`. To use a different LLM provider for Engram's fact extraction, change `ENGRAM_LLM_PROVIDER` in `docker-compose.yml` — see [Engram's provider docs](https://github.com/jamjet-labs/jamjet/tree/main/runtime/engram-server#llm-providers).
 
