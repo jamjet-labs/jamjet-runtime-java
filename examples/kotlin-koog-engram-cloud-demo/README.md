@@ -1,13 +1,13 @@
 # Kotlin + Koog + Engram + JamJet Cloud Demo
 
-A multi-turn chat agent built on **[Koog](https://github.com/JetBrains/koog) 0.8** (JetBrains' Kotlin agent framework) that **remembers facts across calls** via [Engram](https://github.com/jamjet-labs/jamjet/tree/main/runtime/engram-server) and is **observed end-to-end** by [JamJet Cloud](https://cloud.jamjet.dev) — drop in a single 25-line extension function and your Koog agent is shipping OTLP traces.
+A multi-turn chat agent built on **[Koog](https://github.com/JetBrains/koog) 0.8** (JetBrains' Kotlin agent framework) that **remembers facts across calls** via [Engram](https://github.com/jamjet-labs/jamjet/tree/main/runtime/engram-server) and is **observed end-to-end** by [JamJet Cloud](https://cloud.jamjet.dev) — drop in a single ~25-line extension function and your Koog agent is shipping OTLP traces.
 
 ## What this demo shows
 
 - **Koog 0.8** Kotlin-native agent — `AIAgent` constructor with OpenAI executor, `singleRunStrategy`, and a `ToolRegistry`
 - **`koog-spring-boot-starter`** autoconfigures the OpenAI `SingleLLMPromptExecutor` from `ai.koog.openai.api-key`
 - **`engram-spring-boot-starter`** autoconfigures `EngramClient` so the agent's `@Tool` methods record + recall facts against a real Engram server
-- **One extension function — `addJamjetCloudExporter()`** — wires Koog's built-in OpenTelemetry feature to JamJet Cloud's OTLP/JSON intake. No Micrometer, no Spring AI observation handlers, no per-vendor SDK.
+- **One extension function — `addJamjetCloudExporter()`** — wires Koog's built-in OpenTelemetry feature to JamJet Cloud's OTLP/HTTP-protobuf intake. Uses the stock `OtlpHttpSpanExporter` already on Koog's classpath; no custom marshaler, no proprietary SDK.
 
 ## The headline file: `JamjetCloudExporter.kt`
 
@@ -18,23 +18,23 @@ The entire JamJet integration is one extension on Koog's `OpenTelemetryConfig`:
 public fun OpenTelemetryConfig.addJamjetCloudExporter(
     apiKey: String? = null,
     apiUrl: String = "https://api.jamjet.dev",
-    timeout: Duration = 10.seconds,
+    timeout: Duration = Duration.ofSeconds(10),
 ) {
     val key = apiKey
-        ?: getEnvironmentVariableOrNull("JAMJET_API_KEY")
+        ?: System.getenv("JAMJET_API_KEY")
         ?: error("JAMJET_API_KEY is missing.")
 
     addSpanExporter(
-        OtlpJsonSpanExporter(
-            endpoint = "$apiUrl/v1/otlp/v1/traces",
-            headers = mapOf("Authorization" to "Bearer $key"),
-            timeout = timeout,
-        )
+        OtlpHttpSpanExporter.builder()
+            .setEndpoint("$apiUrl/v1/otlp/v1/traces")
+            .addHeader("Authorization", "Bearer $key")
+            .setTimeout(timeout)
+            .build()
     )
 }
 ```
 
-That's it. Mirrors the `addDatadogExporter` / `addLangfuseExporter` pattern that ships with Koog — plug it into any Koog agent's `install(OpenTelemetry) { ... }` block and JamJet receives every LLM span, tool span, and cost rollup.
+That's it. Mirrors the `addDatadogExporter` / `addLangfuseExporter` pattern that ships with Koog — plug it into any Koog agent's `install(OpenTelemetry) { ... }` block and JamJet receives every LLM span, tool span, and cost rollup. The exporter is the standard `io.opentelemetry:opentelemetry-exporter-otlp` already pulled in by `agents-features-opentelemetry-jvm:0.8.0`.
 
 ## How it's wired
 
@@ -49,10 +49,10 @@ User → POST /chat?session=alice ──→ Koog AIAgent
                                         │
                                         └─→ OpenTelemetry feature → addJamjetCloudExporter()
                                                                           │
-                                                                          └─→ OTLP/JSON → JamJet Cloud
+                                                                          └─→ OTLP/HTTP-protobuf → JamJet Cloud
 ```
 
-JamJet Cloud's OTLP/JSON intake (`POST /v1/otlp/v1/traces`) ingests Koog's spans directly — no per-framework adapter, no proprietary SDK on the agent side.
+JamJet Cloud's OTLP intake (`POST /v1/otlp/v1/traces`) ingests Koog's spans directly — no per-framework adapter, no proprietary SDK on the agent side.
 
 ## Prerequisites
 
@@ -112,11 +112,11 @@ Open [cloud.jamjet.dev/dashboard/graph](https://cloud.jamjet.dev/dashboard/graph
 
 ## Anatomy
 
-The interesting code is ~150 LOC across 5 Kotlin files:
+The interesting code is ~50 LOC across 5 Kotlin files:
 
 | File | What it does |
 |---|---|
-| `cloud/JamjetCloudExporter.kt` | The 25-line extension function — adds JamJet to any Koog agent's `OpenTelemetry` config |
+| `cloud/JamjetCloudExporter.kt` | The ~25-line extension function — adds JamJet to any Koog agent's `OpenTelemetry` config |
 | `MemoryTools.kt` | `ToolSet` with `@Tool`+`@LLMDescription` methods backed by autoconfigured `EngramClient` |
 | `MemoryAgent.kt` | Builds a Koog `AIAgent` per request: OpenAI executor + tools + `install(OpenTelemetry)` |
 | `ChatController.kt` | `POST /chat?session=X` — accepts `text/plain`, returns `{"session","reply"}` |
@@ -137,7 +137,7 @@ To swap the chat model (e.g. to `OpenAIModels.Chat.GPT4o`), edit `MemoryAgent.kt
 
 ## How is this different from Track 1's Java/Spring AI demo?
 
-[Track 1 (`spring-ai-engram-cloud-demo`)](../spring-ai-engram-cloud-demo) targets Spring AI users — its observability is wired through Spring AI's Micrometer Observation hooks via `jamjet-cloud-spring-boot-starter`. This Kotlin track targets Koog users — observability is wired through Koog's built-in OpenTelemetry feature via vendor-neutral OTLP/JSON. **JamJet Cloud sees both flavours of trace identically** (same `service.name`, same span shape, same cost rollups) because both end up at the OTLP intake. Pick the demo that matches your runtime.
+[Track 1 (`spring-ai-engram-cloud-demo`)](../spring-ai-engram-cloud-demo) targets Spring AI users — observability is wired through Spring Boot's standard OTLP tracing autoconfig (Micrometer Observation → OTel span → OTLP exporter, all in `application.yml`). This Kotlin track targets Koog users — observability is wired through Koog's built-in OpenTelemetry feature via the same stock `OtlpHttpSpanExporter`. **JamJet Cloud sees both flavours of trace identically** (same `service.name`, same span shape, same cost rollups) because both end up at the OTLP intake. Pick the demo that matches your runtime.
 
 ## Windows notes
 

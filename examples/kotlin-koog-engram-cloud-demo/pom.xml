@@ -10,7 +10,7 @@
     <packaging>jar</packaging>
 
     <name>Kotlin + Koog + Engram + JamJet Cloud Demo</name>
-    <description>Reference demo: Koog (Kotlin agent framework) with Engram durable memory, observed by JamJet Cloud via OTLP/JSON</description>
+    <description>Reference demo: Koog (Kotlin agent framework) with Engram durable memory, observed by JamJet Cloud via stock OpenTelemetry OTLP exporter</description>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -61,7 +61,9 @@
             <version>${koog.version}</version>
         </dependency>
         <!-- Koog OpenTelemetry feature: provides OpenTelemetryConfig + the addSpanExporter hook
-             that JamjetCloudExporter plugs a custom OTLP/JSON exporter into. -->
+             that JamjetCloudExporter plugs the stock OtlpHttpSpanExporter into. Pulls in
+             io.opentelemetry:opentelemetry-exporter-otlp:1.49 transitively, so no additional
+             OTel deps need to be declared here. -->
         <dependency>
             <groupId>ai.koog</groupId>
             <artifactId>agents-features-opentelemetry-jvm</artifactId>
