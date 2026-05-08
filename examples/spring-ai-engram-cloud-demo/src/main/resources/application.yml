@@ -16,10 +16,19 @@ spring:
 engram:
   base-url: ${ENGRAM_BASE_URL:http://127.0.0.1:9090}
 
-jamjet:
-  cloud:
-    api-key: ${JAMJET_API_KEY}
-    api-url: ${JAMJET_API_URL:https://api.jamjet.dev}
+# Spring Boot tracing → JamJet Cloud over OTLP/HTTP-protobuf.
+# Spring AI 1.0 emits Micrometer Observations for every chat call + tool call;
+# micrometer-tracing-bridge-otel turns them into OTel spans; the OTLP exporter
+# ships them to /v1/otlp/v1/traces with the project key as a bearer token.
+management:
+  tracing:
+    sampling:
+      probability: 1.0
+  otlp:
+    tracing:
+      endpoint: ${JAMJET_API_URL:https://api.jamjet.dev}/v1/otlp/v1/traces
+      headers:
+        Authorization: "Bearer ${JAMJET_API_KEY}"
 
 app:
   engram:
