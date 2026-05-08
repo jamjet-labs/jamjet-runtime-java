@@ -13,7 +13,7 @@ import org.springframework.stereotype.Service
 
 /**
  * A Koog [AIAgent] wired with Engram-backed memory tools and OpenTelemetry
- * traces shipped to JamJet Cloud via OTLP/JSON.
+ * traces shipped to JamJet Cloud via the standard OTLP/HTTP-protobuf exporter.
  *
  * The autoconfigured `MultiLLMPromptExecutor` (provided by `koog-spring-boot-starter`)
  * routes to whichever LLM client beans are present — here just OpenAI, configured
