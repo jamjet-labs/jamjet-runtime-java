@@ -1,0 +1,37 @@
+server:
+  address: 127.0.0.1
+  # 8181 to avoid colliding with JamJet Cloud's local stack on 8080. If you're running
+  # against the hosted https://api.jamjet.dev, you can use 8080 here without conflict.
+  port: 8181
+
+spring:
+  application:
+    name: kotlin-koog-engram-cloud-demo
+
+# Koog's Spring Boot starter — autoconfigures the OpenAI LLM client + executor beans.
+# `enabled=true` and `base-url=https://api.openai.com` are pre-set in the starter's
+# default property file (META-INF/config/koog/openai-llm.properties); we only need
+# to supply the API key.
+ai:
+  koog:
+    openai:
+      api-key: ${OPENAI_API_KEY}
+
+# Engram Spring Boot starter — autoconfigures EngramClient against engram.base-url.
+engram:
+  base-url: ${ENGRAM_BASE_URL:http://127.0.0.1:9090}
+
+# JamJet Cloud — used by JamjetCloudExporter (in dev/jamjet/demo/koogengram/cloud).
+jamjet:
+  cloud:
+    api-key: ${JAMJET_API_KEY}
+    api-url: ${JAMJET_API_URL:https://api.jamjet.dev}
+
+app:
+  engram:
+    health-url: ${ENGRAM_BASE_URL:http://127.0.0.1:9090}/health
+
+logging:
+  level:
+    ai.koog: INFO
+    dev.jamjet: INFO

@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>dev.jamjet.examples</groupId>
+    <artifactId>kotlin-koog-engram-cloud-demo</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+
+    <name>Kotlin + Koog + Engram + JamJet Cloud Demo</name>
+    <description>Reference demo: Koog (Kotlin agent framework) with Engram durable memory, observed by JamJet Cloud via OTLP/JSON</description>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.release>21</maven.compiler.release>
+        <kotlin.version>2.3.10</kotlin.version>
+        <kotlin.compiler.jvmTarget>21</kotlin.compiler.jvmTarget>
+        <!-- Spring Boot 3.5.x is required: koog-spring-boot-starter:0.8.0 transitively imports
+             spring-boot-dependencies:3.5.13. Older Spring Boot lines (3.3.x) are missing artifacts
+             that the starter expects (e.g. `spring-boot-actuator-autoconfigure-tracing`). -->
+        <spring-boot.version>3.5.13</spring-boot.version>
+        <koog.version>0.8.0</koog.version>
+        <jamjet-engram.version>0.2.0</jamjet-engram.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Kotlin BOM imported FIRST so its kotlin-stdlib (matching the kotlin compiler we
+                 build with — required for Koog 0.8.0 which references kotlin.time.Clock added in
+                 2.1+) wins over the older 1.9.x stdlib pinned by spring-boot-dependencies. -->
+            <dependency>
+                <groupId>org.jetbrains.kotlin</groupId>
+                <artifactId>kotlin-bom</artifactId>
+                <version>${kotlin.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-dependencies</artifactId>
+                <version>${spring-boot.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <!-- Spring Boot web -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- Koog: Kotlin agent framework -->
+        <dependency>
+            <groupId>ai.koog</groupId>
+            <artifactId>koog-spring-boot-starter</artifactId>
+            <version>${koog.version}</version>
+        </dependency>
+        <!-- Koog OpenTelemetry feature: provides OpenTelemetryConfig + the addSpanExporter hook
+             that JamjetCloudExporter plugs a custom OTLP/JSON exporter into. -->
+        <dependency>
+            <groupId>ai.koog</groupId>
+            <artifactId>agents-features-opentelemetry-jvm</artifactId>
+            <version>${koog.version}</version>
+        </dependency>
+
+        <!-- Engram durable memory: autoconfigures EngramClient from engram.base-url -->
+        <dependency>
+            <groupId>dev.jamjet</groupId>
+            <artifactId>engram-spring-boot-starter</artifactId>
+            <version>${jamjet-engram.version}</version>
+        </dependency>
+
+        <!-- Kotlin runtime -->
+        <dependency>
+            <groupId>org.jetbrains.kotlin</groupId>
+            <artifactId>kotlin-stdlib</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.jetbrains.kotlin</groupId>
+            <artifactId>kotlin-reflect</artifactId>
+        </dependency>
+        <!-- Kotlin coroutines: Koog's run() is suspend, called from Spring MVC via runBlocking -->
+        <dependency>
+            <groupId>org.jetbrains.kotlinx</groupId>
+            <artifactId>kotlinx-coroutines-core</artifactId>
+            <version>1.10.0</version>
+        </dependency>
+        <!-- kotlinx-serialization: Koog 0.8.0 is compiled against 1.10.0 (uses
+             kotlinx.serialization.internal.InstantSerializer added in 1.9). Spring Boot pins
+             a much older 1.6.3, so we force the newer version explicitly. -->
+        <dependency>
+            <groupId>org.jetbrains.kotlinx</groupId>
+            <artifactId>kotlinx-serialization-core-jvm</artifactId>
+            <version>1.10.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.jetbrains.kotlinx</groupId>
+            <artifactId>kotlinx-serialization-json-jvm</artifactId>
+            <version>1.10.0</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.module</groupId>
+            <artifactId>jackson-module-kotlin</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <sourceDirectory>${project.basedir}/src/main/kotlin</sourceDirectory>
+        <testSourceDirectory>${project.basedir}/src/test/kotlin</testSourceDirectory>
+        <plugins>
+            <plugin>
+                <groupId>org.jetbrains.kotlin</groupId>
+                <artifactId>kotlin-maven-plugin</artifactId>
+                <version>${kotlin.version}</version>
+                <configuration>
+                    <args>
+                        <arg>-Xjsr305=strict</arg>
+                    </args>
+                    <compilerPlugins>
+                        <plugin>spring</plugin>
+                    </compilerPlugins>
+                    <jvmTarget>${kotlin.compiler.jvmTarget}</jvmTarget>
+                </configuration>
+                <dependencies>
+                    <dependency>
+                        <groupId>org.jetbrains.kotlin</groupId>
+                        <artifactId>kotlin-maven-allopen</artifactId>
+                        <version>${kotlin.version}</version>
+                    </dependency>
+                </dependencies>
+                <executions>
+                    <execution>
+                        <id>compile</id>
+                        <phase>compile</phase>
+                        <goals>
+                            <goal>compile</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>test-compile</id>
+                        <phase>test-compile</phase>
+                        <goals>
+                            <goal>test-compile</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- Disable default java compiler — Kotlin sources only -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>default-compile</id>
+                        <phase>none</phase>
+                    </execution>
+                    <execution>
+                        <id>default-testCompile</id>
+                        <phase>none</phase>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <version>${spring-boot.version}</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>
