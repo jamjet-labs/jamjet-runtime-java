@@ -1,5 +1,8 @@
 package dev.jamjet.cloud.spring;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import dev.jamjet.cloud.agentboundary.ActionReceipt;
 import dev.jamjet.cloud.agentboundary.ActionReceiptEmitter;
 import dev.jamjet.cloud.agentboundary.ActionReceiptValidator;
@@ -249,6 +252,61 @@ class ActionReceiptAdvisorTest {
     @Test
     void advisorNameIsActionReceiptAdvisor() {
         assertThat(advisor.getName()).isEqualTo("ActionReceiptAdvisor");
+    }
+
+    // -------------------------------------------------------------------------
+    // Spec-compliance: receipt_hash must be independently verifiable
+    // -------------------------------------------------------------------------
+
+    /**
+     * AgentBoundary v0.1 spec §4.12: the receipt_hash is SHA-256 of the canonicalized
+     * receipt content excluding the receipt_hash field itself.
+     *
+     * <p>This test proves that an auditor who receives a JamJet-emitted receipt JSON can
+     * independently recompute the hash by:
+     * <ol>
+     *   <li>Deserializing the receipt JSON into a Map</li>
+     *   <li>Removing the {@code receipt_hash} field</li>
+     *   <li>Re-serializing with canonical JSON (sorted keys, NON_NULL)</li>
+     *   <li>Computing SHA-256 and comparing with the emitted hash</li>
+     * </ol>
+     */
+    @Test
+    void receiptHashIsIndependentlyVerifiablePerSpec() throws Exception {
+        // Arrange: emit a receipt for a realistic tool call
+        AssistantMessage msg = new AssistantMessage("", Map.of(), List.of(
+            new AssistantMessage.ToolCall("call1", "function", "database.query",
+                "{\"sql\": \"SELECT * FROM users\", \"limit\": 100}")
+        ));
+        ChatResponse chatResponse = new ChatResponse(List.of(new Generation(msg)));
+        ChatClientResponse response = ChatClientResponse.builder().chatResponse(chatResponse).build();
+
+        advisor.after(response, mockChain);
+
+        assertThat(emitter.receipts).hasSize(1);
+        ActionReceipt receipt = emitter.receipts.get(0);
+
+        // Act: independently recompute receipt_hash from the receipt's serialized JSON.
+        // This is exactly what an external auditor would do.
+        ObjectMapper canonicalMapper = new ObjectMapper();
+        canonicalMapper.configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
+        canonicalMapper.setSerializationInclusion(JsonInclude.Include.NON_NULL);
+
+        // Step 1: serialize the full receipt to a Map (round-trip via JSON preserves @JsonProperty names)
+        String fullJson = canonicalMapper.writeValueAsString(receipt);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> receiptMap = canonicalMapper.readValue(fullJson, Map.class);
+
+        // Step 2: remove the receipt_hash field
+        receiptMap.remove("receipt_hash");
+
+        // Step 3: canonical-JSON-SHA-256 the remaining content
+        String recomputedHash = ActionReceiptAdvisor.canonicalJsonSha256Hex(receiptMap);
+
+        // Assert: auditor-recomputed hash matches what the advisor emitted
+        assertThat(recomputedHash)
+            .as("Auditor-recomputed receipt_hash must match emitted receipt_hash (AgentBoundary §4.12)")
+            .isEqualTo(receipt.receiptHash());
     }
 
     // -------------------------------------------------------------------------

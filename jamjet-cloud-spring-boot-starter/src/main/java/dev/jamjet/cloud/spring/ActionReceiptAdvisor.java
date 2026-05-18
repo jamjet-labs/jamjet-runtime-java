@@ -1,5 +1,6 @@
 package dev.jamjet.cloud.spring;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -8,6 +9,7 @@ import dev.jamjet.cloud.agentboundary.ActionReceiptEmitter;
 import dev.jamjet.cloud.agentboundary.Actor;
 import dev.jamjet.cloud.agentboundary.ActorType;
 import dev.jamjet.cloud.agentboundary.Agent;
+import dev.jamjet.cloud.agentboundary.Approval;
 import dev.jamjet.cloud.agentboundary.Execution;
 import dev.jamjet.cloud.agentboundary.ExecutionStatus;
 import dev.jamjet.cloud.agentboundary.LoggingActionReceiptEmitter;
@@ -21,20 +23,14 @@ import org.springframework.ai.chat.client.ChatClientRequest;
 import org.springframework.ai.chat.client.ChatClientResponse;
 import org.springframework.ai.chat.client.advisor.api.AdvisorChain;
 import org.springframework.ai.chat.client.advisor.api.BaseAdvisor;
-import org.springframework.ai.chat.client.advisor.api.CallAdvisorChain;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
-import org.springframework.core.env.Environment;
-
-import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
-import java.util.TreeMap;
 import java.util.UUID;
 
 /**
@@ -73,9 +69,22 @@ public final class ActionReceiptAdvisor implements BaseAdvisor {
     private static final String FRAMEWORK = "spring-ai";
     private static final String FRAMEWORK_VERSION = "1.0.0";
 
+    /**
+     * Canonical JSON mapper: keys sorted, null values omitted.
+     * Satisfies AgentBoundary v0.1 spec §4.8 canonicalization requirement
+     * (RFC 8785-compatible via {@code ORDER_MAP_ENTRIES_BY_KEYS=true}).
+     */
+    private static final ObjectMapper CANONICAL_MAPPER = createCanonicalMapper();
+
+    private static ObjectMapper createCanonicalMapper() {
+        ObjectMapper m = new ObjectMapper();
+        m.configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
+        m.setSerializationInclusion(JsonInclude.Include.NON_NULL);
+        return m;
+    }
+
     private final ActionReceiptEmitter emitter;
     private final org.springframework.core.env.Environment springEnv;
-    private final ObjectMapper sortedMapper;
     private final int order;
 
     /**
@@ -104,8 +113,6 @@ public final class ActionReceiptAdvisor implements BaseAdvisor {
         this.springEnv = springEnv;
         this.emitter = emitter;
         this.order = order;
-        this.sortedMapper = new ObjectMapper();
-        this.sortedMapper.configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
     }
 
     // -------------------------------------------------------------------------
@@ -182,9 +189,11 @@ public final class ActionReceiptAdvisor implements BaseAdvisor {
             Policy policy = new Policy("default.allow", "1", PolicyDecision.ALLOW);
             Execution execution = new Execution(ExecutionStatus.SUCCESS, completedAt, null, null);
 
-            // receipt_hash = SHA-256 of the JSON-serialized receipt without the receipt_hash field
-            // We approximate by hashing key fields deterministically.
-            String receiptHash = computeReceiptHash(receiptId, issuedAt, tc.name(), argsHash, completedAt);
+            // receipt_hash = SHA-256 of canonical JSON of all receipt fields EXCEPT receipt_hash itself.
+            // Per AgentBoundary v0.1 spec §4.12: canonical JSON with ORDER_MAP_ENTRIES_BY_KEYS=true, NON_NULL.
+            String receiptHash = computeReceiptHash(
+                ActionReceipt.CURRENT_VERSION, receiptId, issuedAt,
+                actor, agent, tool, target, argsHash, policy, null, execution);
 
             ActionReceipt receipt = new ActionReceipt(
                 ActionReceipt.CURRENT_VERSION,
@@ -209,55 +218,96 @@ public final class ActionReceiptAdvisor implements BaseAdvisor {
     }
 
     /**
-     * SHA-256 of the canonical JSON of the tool arguments, with object keys sorted.
-     * If arguments is null or empty JSON object/array, hashes the empty string.
+     * SHA-256 of the canonical JSON of the tool arguments.
+     *
+     * <p>Canonicalization scheme (AgentBoundary v0.1 spec §4.8, MUST document):
+     * Jackson serialization with {@code ORDER_MAP_ENTRIES_BY_KEYS=true} and
+     * {@code Include.NON_NULL}, UTF-8 bytes, lowercase hex output.
+     * If {@code arguments} is null or blank the empty JSON object {@code {}} is used.
      */
-    private String computeArgumentsHash(String arguments) {
-        String canonical = canonicalize(arguments);
-        return sha256Hex(canonical);
-    }
-
-    /**
-     * Canonicalize a JSON string by round-tripping through Jackson with sorted keys.
-     * Falls back to the raw string on parse errors (e.g., plain string arguments).
-     */
-    @SuppressWarnings("unchecked")
-    private String canonicalize(String json) {
-        if (json == null || json.isBlank()) return "";
+    private static String computeArgumentsHash(String arguments) {
         try {
-            Object parsed = sortedMapper.readValue(json, Object.class);
-            if (parsed instanceof Map<?, ?>) {
-                TreeMap<String, Object> sorted = new TreeMap<>((Map<String, Object>) parsed);
-                return sortedMapper.writeValueAsString(sorted);
+            Object parsed;
+            if (arguments == null || arguments.isBlank()) {
+                parsed = Map.of();
+            } else {
+                parsed = CANONICAL_MAPPER.readValue(arguments, Object.class);
             }
-            return sortedMapper.writeValueAsString(parsed);
+            return canonicalJsonSha256Hex(parsed);
         } catch (JsonProcessingException e) {
-            return json;
+            // Fall back: treat as a plain string wrapped in canonical JSON
+            return canonicalJsonSha256Hex(arguments);
         }
     }
 
     /**
-     * Deterministic receipt_hash over identifying fields (without the full POJO round-trip
-     * to avoid circular dependency on the hash itself).
+     * SHA-256 of canonical JSON of all receipt fields EXCEPT {@code receipt_hash} itself.
+     *
+     * <p>Per AgentBoundary v0.1 spec §4.12: the hash input is the receipt content
+     * serialized as canonical JSON (RFC 8785-compatible: {@code ORDER_MAP_ENTRIES_BY_KEYS=true},
+     * {@code Include.NON_NULL}), encoded as UTF-8, digested with SHA-256, lowercase hex.
+     *
+     * <p>An auditor can independently verify by: serializing the full receipt JSON,
+     * removing the {@code receipt_hash} field, re-canonicalizing, and comparing SHA-256.
+     * This method produces the same bytes as that auditor path because it first round-trips
+     * all sub-objects through Jackson (resolving {@code @JsonProperty} names), then applies
+     * the canonical serialization — exactly mirroring what the auditor does.
      */
-    private String computeReceiptHash(
-            String receiptId, String issuedAt, String toolName,
-            String argsHash, String completedAt) {
-        String input = receiptId + "|" + issuedAt + "|" + toolName + "|" + argsHash + "|" + completedAt;
-        return sha256Hex(input);
+    @SuppressWarnings("unchecked")
+    private static String computeReceiptHash(
+            String version, String receiptId, String issuedAt,
+            Actor actor, Agent agent, Tool tool, Target target,
+            String argumentsHash, Policy policy, Approval approval, Execution execution) {
+        // Build a preliminary Map using plain-string keys + POJOs. Serialize each sub-object
+        // through CANONICAL_MAPPER so that @JsonProperty names (e.g. "framework_version") are
+        // used instead of Java field names — exactly matching the receipt wire format.
+        // Then round-trip the whole map through Jackson so nested POJOs become Map<String,Object>,
+        // identical to what an external auditor would reconstruct from the receipt JSON.
+        try {
+            Map<String, Object> raw = new LinkedHashMap<>();
+            raw.put("version", version);
+            raw.put("receipt_id", receiptId);
+            raw.put("issued_at", issuedAt);
+            raw.put("actor", actor);
+            raw.put("agent", agent);
+            raw.put("tool", tool);
+            raw.put("target", target);
+            raw.put("arguments_hash", argumentsHash);
+            raw.put("policy", policy);
+            if (approval != null) raw.put("approval", approval);
+            raw.put("execution", execution);
+
+            // Round-trip through canonical JSON: POJOs → JSON bytes → Map<String,Object>
+            // This resolves all @JsonProperty annotations and produces the same Map structure
+            // that an external auditor sees when deserializing the receipt JSON.
+            String intermediateJson = CANONICAL_MAPPER.writeValueAsString(raw);
+            Map<String, Object> canonicalMap = CANONICAL_MAPPER.readValue(intermediateJson, Map.class);
+
+            return canonicalJsonSha256Hex(canonicalMap);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Failed to compute receipt hash", e);
+        }
     }
 
-    private static String sha256Hex(String input) {
+    /**
+     * Compute SHA-256 of the canonical JSON serialization of {@code input}.
+     *
+     * <p>Canonical JSON: Jackson with {@code ORDER_MAP_ENTRIES_BY_KEYS=true} and
+     * {@code Include.NON_NULL}, no extra whitespace, UTF-8 bytes.
+     * Output: lowercase hex, 64 characters.
+     */
+    static String canonicalJsonSha256Hex(Object input) {
         try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
+            byte[] bytes = CANONICAL_MAPPER.writeValueAsBytes(input);
+            MessageDigest sha = MessageDigest.getInstance("SHA-256");
+            byte[] hash = sha.digest(bytes);
             StringBuilder sb = new StringBuilder(64);
             for (byte b : hash) {
                 sb.append(String.format("%02x", b));
             }
             return sb.toString();
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 not available", e);
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to compute canonical JSON SHA-256", e);
         }
     }
 
