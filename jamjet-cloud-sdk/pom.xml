@@ -87,5 +87,11 @@
             <version>4.2.2</version>
             <scope>test</scope>
         </dependency>
+        <!-- Logback: SLF4J implementation for log-capture in tests. -->
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>
