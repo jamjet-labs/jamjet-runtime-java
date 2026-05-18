@@ -59,6 +59,13 @@
             <version>0.36.2</version>
             <optional>true</optional>
         </dependency>
+        <!-- langchain4j main artifact — provides ToolExecutor interface (dev.langchain4j.service.tool) -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j</artifactId>
+            <version>1.12.2</version>
+            <optional>true</optional>
+        </dependency>
 
         <!-- Spring AI — optional/provided so users who don't use Spring AI don't pull it in -->
         <dependency>

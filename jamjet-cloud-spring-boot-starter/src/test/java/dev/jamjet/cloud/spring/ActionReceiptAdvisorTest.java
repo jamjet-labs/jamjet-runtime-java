@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import dev.jamjet.cloud.agentboundary.ActionReceipt;
 import dev.jamjet.cloud.agentboundary.ActionReceiptEmitter;
 import dev.jamjet.cloud.agentboundary.ActionReceiptValidator;
+import dev.jamjet.cloud.agentboundary.ReceiptHashes;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.client.ChatClientRequest;
@@ -301,7 +302,7 @@ class ActionReceiptAdvisorTest {
         receiptMap.remove("receipt_hash");
 
         // Step 3: canonical-JSON-SHA-256 the remaining content
-        String recomputedHash = ActionReceiptAdvisor.canonicalJsonSha256Hex(receiptMap);
+        String recomputedHash = ReceiptHashes.canonicalJsonSha256Hex(receiptMap);
 
         // Assert: auditor-recomputed hash matches what the advisor emitted
         assertThat(recomputedHash)
