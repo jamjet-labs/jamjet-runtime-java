@@ -51,6 +51,13 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- AgentBoundary: JSON Schema 2020-12 validation for Action Receipts. -->
+        <dependency>
+            <groupId>com.networknt</groupId>
+            <artifactId>json-schema-validator</artifactId>
+            <version>1.5.2</version>
+        </dependency>
+
         <!-- Test scope -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
