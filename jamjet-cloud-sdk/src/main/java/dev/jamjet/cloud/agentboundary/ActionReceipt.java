@@ -7,7 +7,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
  * AgentBoundary v0.1 Action Receipt — portable, tamper-evident proof of an
  * AI-initiated production action.
  *
- * <p>Implements the v0.1 spec at https://agentboundary.dev/schemas/action-receipt-v0.1.json
+ * <p>Implements the v0.1 spec at https://agentboundary.jamjet.dev/schemas/action-receipt-v0.1.json
  *
  * <p>Validate an instance with {@link ActionReceiptValidator}.
  */
