@@ -42,6 +42,10 @@ public final class PlainJavaCloudDemo {
                 argsHash, policy, null, execution);
         ActionReceipt receipt = new ActionReceipt(ActionReceipt.CURRENT_VERSION, receiptId, now,
                 actor, agent, tool, target, argsHash, policy, null, execution, receiptHash);
+        java.util.List<String> errors = new ActionReceiptValidator().validate(receipt);
+        if (!errors.isEmpty()) {
+            throw new IllegalStateException("receipt failed schema validation: " + errors);
+        }
         emitter.emit(receipt);
     }
 
