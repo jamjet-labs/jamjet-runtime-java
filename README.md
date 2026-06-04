@@ -127,7 +127,7 @@ Drop-in observability for Spring AI and LangChain4j agents. Mirrors the Python `
 <dependency>
   <groupId>dev.jamjet</groupId>
   <artifactId>jamjet-cloud-spring-boot-starter</artifactId>
-  <version>0.2.0</version>
+  <version>0.3.1</version>
 </dependency>
 ```
 
@@ -141,13 +141,15 @@ jamjet:
 
 That's it. Every Spring AI `ChatClient` / `ChatModel` call and every LangChain4j `ChatLanguageModel` call is captured automatically.
 
+See examples/jamjet-cloud-sdk-demo for a runnable end-to-end example.
+
 ### Plain Java (LangChain4j without Spring)
 
 ```xml
 <dependency>
   <groupId>dev.jamjet</groupId>
   <artifactId>jamjet-cloud-sdk</artifactId>
-  <version>0.2.0</version>
+  <version>0.3.1</version>
 </dependency>
 ```
 

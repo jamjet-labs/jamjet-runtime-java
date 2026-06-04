@@ -1,0 +1,14 @@
+spring:
+  application:
+    name: cloud-sdk-demo
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY:}
+      chat:
+        options:
+          model: gpt-4o-mini
+
+jamjet:
+  cloud:
+    api-key: ${JJ_API_KEY:}
+    project: cloud-sdk-demo
