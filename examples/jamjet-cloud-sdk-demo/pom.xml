@@ -55,6 +55,14 @@
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-model-openai</artifactId>
         </dependency>
+        <!-- langchain4j-core is optional in the starter but the JamjetCloudAutoConfiguration
+             return type references JamjetChatModelListener which imports it; include here so
+             Spring's class introspection can resolve it at context startup. -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-core</artifactId>
+            <version>0.36.2</version>
+        </dependency>
 
         <dependency>
             <groupId>org.springframework.boot</groupId>

@@ -1,0 +1,12 @@
+spring:
+  ai:
+    openai:
+      api-key: test-key
+      base-url: http://localhost:0
+jamjet:
+  cloud:
+    api-key: test-key
+    api-url: http://localhost:0
+    batch:
+      size: 1
+      interval-ms: 100
