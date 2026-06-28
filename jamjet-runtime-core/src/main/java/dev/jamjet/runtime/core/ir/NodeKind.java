@@ -1,9 +1,13 @@
 package dev.jamjet.runtime.core.ir;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import dev.jamjet.runtime.core.QueueType;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -12,6 +16,7 @@ import java.util.Map;
         @JsonSubTypes.Type(value = NodeKind.Model.class, name = "model"),
         @JsonSubTypes.Type(value = NodeKind.Tool.class, name = "tool"),
         @JsonSubTypes.Type(value = NodeKind.PythonFn.class, name = "python_fn"),
+        @JsonSubTypes.Type(value = NodeKind.JavaFn.class, name = "java_fn"),
         @JsonSubTypes.Type(value = NodeKind.Condition.class, name = "condition"),
         @JsonSubTypes.Type(value = NodeKind.Parallel.class, name = "parallel"),
         @JsonSubTypes.Type(value = NodeKind.Join.class, name = "join"),
@@ -30,11 +35,16 @@ import java.util.Map;
 })
 public sealed interface NodeKind {
 
+    // Computed routing/durability helpers — NOT IR fields. @JsonIgnore keeps them
+    // off the wire so a serialized node matches the Rust NodeKind shape exactly
+    // (the Rust structs have no `queue_type`/`durable` field on a node kind).
+    @JsonIgnore
     default QueueType queueType() {
         return switch (this) {
             case Model m -> QueueType.MODEL;
             case Tool t -> QueueType.TOOL;
             case PythonFn p -> QueueType.PYTHON_TOOL;
+            case JavaFn jf -> QueueType.JAVA_TOOL;
             case MemoryRetrieval r -> QueueType.RETRIEVAL;
             case Finalizer f -> QueueType.TOOL;
             case McpTool m -> QueueType.TOOL;
@@ -43,6 +53,7 @@ public sealed interface NodeKind {
         };
     }
 
+    @JsonIgnore
     default boolean isDurable() {
         return !(this instanceof Condition);
     }
@@ -51,8 +62,64 @@ public sealed interface NodeKind {
             String modelRef,
             String promptRef,
             String outputSchema,
-            String systemPrompt
-    ) implements NodeKind {}
+            String systemPrompt,
+            List<Map<String, Object>> tools
+    ) implements NodeKind {
+        public Model {
+            // OpenAI-format tool/function schemas offered to the model for this
+            // call (mirrors the Rust Model.tools / Python agent_ir _model_kind).
+            // Empty (never null) means no tools are offered; it serializes as
+            // "tools":[] matching the Rust #[serde(default)] Vec field.
+            //
+            // Deep-copy + freeze ALL THE WAY DOWN: List.copyOf only freezes the outer
+            // list, leaving nested schema maps/lists mutable so a caller could mutate a
+            // node's tool schema post-construction. The serde shape is unchanged.
+            tools = deepImmutableTools(tools);
+        }
+
+        /** Back-compat constructor: a Model node offering no tools (plain text completion). */
+        public Model(String modelRef, String promptRef, String outputSchema, String systemPrompt) {
+            this(modelRef, promptRef, outputSchema, systemPrompt, List.of());
+        }
+
+        private static List<Map<String, Object>> deepImmutableTools(List<Map<String, Object>> tools) {
+            if (tools == null || tools.isEmpty()) {
+                return List.of();
+            }
+            List<Map<String, Object>> out = new ArrayList<>(tools.size());
+            for (Map<String, Object> tool : tools) {
+                out.add(deepImmutableMap(tool));
+            }
+            return Collections.unmodifiableList(out);
+        }
+
+        @SuppressWarnings("unchecked")
+        private static Map<String, Object> deepImmutableMap(Map<String, Object> map) {
+            if (map == null || map.isEmpty()) {
+                return Map.of();
+            }
+            LinkedHashMap<String, Object> copy = new LinkedHashMap<>(map.size());
+            for (Map.Entry<String, Object> e : map.entrySet()) {
+                copy.put(e.getKey(), deepImmutableValue(e.getValue()));
+            }
+            return Collections.unmodifiableMap(copy);
+        }
+
+        @SuppressWarnings("unchecked")
+        private static Object deepImmutableValue(Object value) {
+            if (value instanceof Map<?, ?> m) {
+                return deepImmutableMap((Map<String, Object>) m);
+            }
+            if (value instanceof List<?> list) {
+                List<Object> out = new ArrayList<>(list.size());
+                for (Object e : list) {
+                    out.add(deepImmutableValue(e));
+                }
+                return Collections.unmodifiableList(out);
+            }
+            return value;
+        }
+    }
 
     record Tool(
             String toolRef,
@@ -67,6 +134,20 @@ public sealed interface NodeKind {
     record PythonFn(
             String module,
             String function,
+            String outputSchema
+    ) implements NodeKind {}
+
+    /**
+     * Arbitrary Java method executed by an external durable Java tool-worker —
+     * the Java analog of {@link PythonFn}. Serializes with the snake_case type
+     * tag {@code "java_fn"} and fields {@code class_name}/{@code method}/
+     * {@code output_schema}, exactly matching the Rust engine's
+     * {@code JavaFn { class_name, method, output_schema }} (Phase A). Routes to
+     * the {@link QueueType#JAVA_TOOL} queue, which the Java tool-worker drains.
+     */
+    record JavaFn(
+            String className,
+            String method,
             String outputSchema
     ) implements NodeKind {}
 

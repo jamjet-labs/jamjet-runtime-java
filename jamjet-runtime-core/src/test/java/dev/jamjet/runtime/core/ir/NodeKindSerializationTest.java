@@ -6,10 +6,13 @@ import dev.jamjet.runtime.core.JamjetJson;
 import dev.jamjet.runtime.core.QueueType;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class NodeKindSerializationTest {
 
@@ -27,6 +30,131 @@ class NodeKindSerializationTest {
 
         NodeKind deserialized = mapper.readValue(json, NodeKind.class);
         assertThat(deserialized).isEqualTo(original);
+    }
+
+    @Test
+    void javaFnNodeRoundTrip() throws JsonProcessingException {
+        NodeKind original = new NodeKind.JavaFn("com.example.AgentTools", "dispatch", "");
+        String json = mapper.writeValueAsString(original);
+
+        // Exactly the Rust engine's Phase-A wire shape:
+        // JavaFn { class_name, method, output_schema } with the "java_fn" tag.
+        assertThat(json).contains("\"type\":\"java_fn\"");
+        assertThat(json).contains("\"class_name\":\"com.example.AgentTools\"");
+        assertThat(json).contains("\"method\":\"dispatch\"");
+        assertThat(json).contains("\"output_schema\":\"\"");
+        // It must NOT leak the camelCase Java property name.
+        assertThat(json).doesNotContain("className");
+
+        NodeKind deserialized = mapper.readValue(json, NodeKind.class);
+        assertThat(deserialized).isEqualTo(original);
+        assertThat(deserialized).isInstanceOf(NodeKind.JavaFn.class);
+    }
+
+    @Test
+    void modelNodeCarriesToolSchemas() throws JsonProcessingException {
+        var schema = Map.<String, Object>of(
+                "type", "function",
+                "function", Map.of(
+                        "name", "web_search",
+                        "description", "Search the web.",
+                        "parameters", Map.of(
+                                "type", "object",
+                                "properties", Map.of("query", "string"),
+                                "required", List.of("query"))));
+        NodeKind original = new NodeKind.Model("gpt4", "", "", "be helpful", List.of(schema));
+        String json = mapper.writeValueAsString(original);
+
+        assertThat(json).contains("\"type\":\"model\"");
+        assertThat(json).contains("\"tools\":[");
+        assertThat(json).contains("\"name\":\"web_search\"");
+
+        NodeKind deserialized = mapper.readValue(json, NodeKind.class);
+        assertThat(deserialized).isEqualTo(original);
+        assertThat(((NodeKind.Model) deserialized).tools()).hasSize(1);
+    }
+
+    @Test
+    void modelNodeWithoutToolsEmitsEmptyToolsArray() throws JsonProcessingException {
+        // The 4-arg back-compat constructor offers no tools; it serializes as
+        // "tools":[] (never null), matching the Rust #[serde(default)] Vec and
+        // the Python final-answer node's "tools": [].
+        NodeKind original = new NodeKind.Model("gpt4", "", "", null);
+        String json = mapper.writeValueAsString(original);
+        assertThat(json).contains("\"tools\":[]");
+
+        NodeKind deserialized = mapper.readValue(json, NodeKind.class);
+        assertThat(deserialized).isEqualTo(original);
+        assertThat(((NodeKind.Model) deserialized).tools()).isEmpty();
+    }
+
+    @Test
+    void modelToolSchemasAreDeeplyImmutable() {
+        // A Model node freezes its tool schemas all the way down: mutating the SOURCE
+        // structures after construction must not leak in, and the node's nested maps are
+        // themselves unmodifiable (the outer-list-only copy of List.copyOf was not enough).
+        Map<String, Object> nestedProps = new LinkedHashMap<>();
+        nestedProps.put("query", "string");
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("type", "object");
+        params.put("properties", nestedProps);
+        Map<String, Object> tool = new LinkedHashMap<>();
+        tool.put("name", "web_search");
+        tool.put("parameters", params);
+        List<Map<String, Object>> mutableTools = new ArrayList<>();
+        mutableTools.add(tool);
+
+        NodeKind.Model model = new NodeKind.Model("gpt4", "", "", "be helpful", mutableTools);
+
+        // Mutating the source structures must NOT affect the node (deep copy).
+        nestedProps.put("injected", "boom");
+        mutableTools.add(Map.of("name", "evil"));
+
+        assertThat(model.tools()).hasSize(1);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> p = (Map<String, Object>) model.tools().get(0).get("parameters");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> props = (Map<String, Object>) p.get("properties");
+        assertThat(props).doesNotContainKey("injected");
+
+        // The node's nested maps are unmodifiable.
+        assertThatThrownBy(() -> model.tools().get(0).put("x", "y"))
+                .isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> props.put("x", "y"))
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    void deserializesOlderModelJsonWithoutToolsFieldToEmpty() throws JsonProcessingException {
+        // Back-compat: older Model JSON had NO `tools` field at all. Jackson must default
+        // it to an empty list (compact ctor maps null -> List.of()), matching the Rust
+        // #[serde(default)] Vec, and round-trip to the canonical "tools":[] shape.
+        String olderJson = "{\"type\":\"model\",\"model_ref\":\"gpt4\","
+                + "\"prompt_ref\":\"summarize\",\"output_schema\":\"{}\","
+                + "\"system_prompt\":\"You are helpful\"}";
+
+        NodeKind deserialized = mapper.readValue(olderJson, NodeKind.class);
+        assertThat(deserialized).isInstanceOf(NodeKind.Model.class);
+        assertThat(((NodeKind.Model) deserialized).tools()).isEmpty();
+
+        String reserialized = mapper.writeValueAsString(deserialized);
+        assertThat(reserialized).contains("\"tools\":[]");
+        assertThat(mapper.readValue(reserialized, NodeKind.class)).isEqualTo(deserialized);
+    }
+
+    @Test
+    void computedHelpersNeverSerialize() throws JsonProcessingException {
+        // queueType()/isDurable() are computed routing helpers, not IR fields:
+        // they must not leak onto the wire (the Rust NodeKind has no such field).
+        for (NodeKind kind : List.of(
+                new NodeKind.Model("m", null, null, null),
+                new NodeKind.JavaFn("C", "m", ""),
+                new NodeKind.Condition(List.of()))) {
+            String json = mapper.writeValueAsString(kind);
+            assertThat(json).doesNotContain("durable");
+            assertThat(json).doesNotContain("queue_type");
+            assertThat(json).doesNotContain("queueType");
+        }
     }
 
     @Test
@@ -83,6 +211,7 @@ class NodeKindSerializationTest {
         assertThat(new NodeKind.Model("m", null, null, null).queueType()).isEqualTo(QueueType.MODEL);
         assertThat(new NodeKind.Tool("t", null, null).queueType()).isEqualTo(QueueType.TOOL);
         assertThat(new NodeKind.PythonFn("m", "f", null).queueType()).isEqualTo(QueueType.PYTHON_TOOL);
+        assertThat(new NodeKind.JavaFn("C", "m", null).queueType()).isEqualTo(QueueType.JAVA_TOOL);
         assertThat(new NodeKind.MemoryRetrieval("c", "q", null).queueType()).isEqualTo(QueueType.RETRIEVAL);
         assertThat(new NodeKind.Finalizer("t", FinalizerTrigger.ALWAYS).queueType()).isEqualTo(QueueType.TOOL);
         assertThat(new NodeKind.McpTool("s", "t", null, null).queueType()).isEqualTo(QueueType.TOOL);
