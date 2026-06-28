@@ -67,6 +67,13 @@ public class JamjetAgentAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    public ToolBeanRegistrar jamjetToolBeanRegistrar(ToolRegistry registry) {
+        // Populates the ToolRegistry above from @Tool-annotated Spring beans (CGLIB-aware).
+        return new ToolBeanRegistrar(registry);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     @ConditionalOnProperty(prefix = "jamjet.agent.worker", name = "enabled", havingValue = "true", matchIfMissing = true)
     public JavaToolWorkerLifecycle javaToolWorkerLifecycle(JamjetEngineClient client,
                                                            ToolRegistry registry,
