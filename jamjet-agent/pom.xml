@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.jamjet</groupId>
+        <artifactId>jamjet-runtime-java-parent</artifactId>
+        <version>0.3.1</version>
+    </parent>
+
+    <artifactId>jamjet-agent</artifactId>
+    <packaging>jar</packaging>
+
+    <name>JamJet Agent (Java)</name>
+    <description>
+        Idiomatic Java agent authoring on the governed durable JamJet engine: a thin
+        Agent builder that compiles to the shared agent-loop WorkflowIr plus a durable
+        Java tool-worker. Plain Java 21 (virtual threads), framework-free. This module
+        owns the bare-route engine HTTP client (workflows, executions, work-items).
+    </description>
+
+    <dependencies>
+        <!-- Typed IR + the shared snake_case JamjetJson mapper (Rust-wire-compatible). -->
+        <dependency>
+            <groupId>dev.jamjet</groupId>
+            <artifactId>jamjet-runtime-core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- JSON: same Jackson the parent project already pins. -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+
+        <!-- HTTP: java.net.http (built-in JDK 11+). No extra dep. -->
+
+        <!-- Test scope -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Hermetic engine stub for the bare-route round-trip test. -->
+        <dependency>
+            <groupId>org.wiremock</groupId>
+            <artifactId>wiremock-standalone</artifactId>
+            <version>3.9.2</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- SLF4J binding so WireMock/Jetty logging has a provider in tests. -->
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>
