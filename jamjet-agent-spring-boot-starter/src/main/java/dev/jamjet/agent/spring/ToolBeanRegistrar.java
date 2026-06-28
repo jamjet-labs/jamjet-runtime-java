@@ -11,6 +11,7 @@ import org.springframework.beans.factory.BeanFactory;
 import org.springframework.beans.factory.BeanFactoryAware;
 import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
+import org.springframework.util.ClassUtils;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -34,6 +35,16 @@ import java.util.List;
  * registering, so a proxied tool-holder still contributes its tools. (Tools are invoked directly
  * on that target, bypassing the proxy's advice — the documented trade-off of authoring tools as
  * proxied beans.)
+ *
+ * <h2>Lazy and not-yet-created beans</h2>
+ * Discovery walks bean <em>definitions</em> ({@code getBeanDefinitionNames}) and resolves each
+ * bean's type with {@link ConfigurableListableBeanFactory#getType(String)} — which does NOT
+ * force instantiation — rather than scanning only the singletons already created. A
+ * {@code @Lazy @Tool} bean is therefore still found and registered (its bean is realized on
+ * demand via {@code getBean} only once a {@code @Tool} method is detected on its user class),
+ * instead of silently vanishing the way a missed proxy would. Beans with no {@code @Tool}
+ * method are never instantiated, and only singleton-scoped beans are registered (the worker
+ * holds one instance by reference, so a prototype tool-holder has no well-defined identity).
  *
  * <h2>Determinism + duplicate guard</h2>
  * Beans are scanned in bean-name order so the emitted tool order is stable across runs and the
@@ -70,17 +81,33 @@ public class ToolBeanRegistrar implements SmartInitializingSingleton, BeanFactor
 
         List<String> scanned = new ArrayList<>();
         for (String name : names) {
-            Object singleton = beanFactory.getSingleton(name);
-            if (singleton == null) {
-                // Not yet created (lazy / non-singleton) — nothing instantiated to scan.
+            // Resolve the bean's type from its definition WITHOUT instantiating it. This is what
+            // lets a @Lazy @Tool bean — not yet created when this callback runs — still be
+            // discovered, instead of being silently dropped the way a missed proxy would be.
+            Class<?> type = beanFactory.getType(name);
+            if (type == null) {
+                // Some infrastructure beans report no resolvable type — nothing to scan.
                 continue;
             }
-            Object holder = unwrapAopTarget(singleton);
-            // Detect on exactly the class register() will scan (the raw target's user class
-            // after unwrapping), so detection and registration never disagree.
-            if (!hasToolMethod(holder.getClass())) {
+            // Detect @Tool on the user class register() will ultimately scan: strip any CGLIB
+            // subclass at the type level (the type-only analogue of the raw-target unwrap below),
+            // so detection and post-unwrap registration never disagree and we never read a
+            // proxy's bare, annotation-less methods.
+            if (!hasToolMethod(ClassUtils.getUserClass(type))) {
+                // No @Tool method — skip WITHOUT getBean so an unrelated lazy bean is never
+                // eagerly instantiated as a side effect of scanning.
                 continue;
             }
+            if (!beanFactory.isSingleton(name)) {
+                // Register only singleton-scoped holders (the worker keeps one instance by
+                // reference); this preserves the prior singleton-only semantics while fixing
+                // the lazy-singleton case. A prototype tool-holder has no stable identity.
+                continue;
+            }
+            // Realize the bean (instantiating a lazy singleton if needed; a no-op for an already
+            // created one), then unwrap any AOP proxy to the raw target whose user class carries
+            // the @Tool annotations register() scans.
+            Object holder = unwrapAopTarget(beanFactory.getBean(name));
             registry.register(holder);
             scanned.add(name);
         }

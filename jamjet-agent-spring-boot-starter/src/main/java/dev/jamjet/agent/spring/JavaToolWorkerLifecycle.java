@@ -41,6 +41,12 @@ public class JavaToolWorkerLifecycle implements SmartLifecycle {
             return;
         }
         thread = new Thread(worker::run, threadName);
+        // Daemon on purpose. A graceful Spring context close routes through stop() below
+        // (interrupt + bounded join), so the worker exits cleanly on the normal path. On an
+        // abrupt JVM exit where stop() never runs, a daemon thread dies without blocking the
+        // exit and the engine reclaims the in-flight (leased) work item via lease expiry — the
+        // at-least-once-fire durability guarantee. A non-daemon thread would instead risk
+        // hanging JVM shutdown if stop() is never called.
         thread.setDaemon(true);
         thread.start();
         running = true;

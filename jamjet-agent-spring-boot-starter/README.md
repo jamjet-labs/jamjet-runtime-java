@@ -25,7 +25,7 @@ the model-seam sidecar, so its bean types always link.
 | --- | --- |
 | `JamjetEngineClient` | Bare-route HTTP transport to the engine, built from `jamjet.agent.*`. |
 | `ToolRegistry` | Populated from your `@Tool` Spring beans (CGLIB-aware). |
-| `JavaToolWorker` (as a `SmartLifecycle`) | Drains the `java_tool` queue on a daemon thread for the life of the context. Gated by `jamjet.agent.worker.enabled` (default `true`). |
+| `JavaToolWorkerLifecycle` | A `SmartLifecycle` wrapping a `JavaToolWorker`; drains the `java_tool` queue on a daemon thread for the life of the context. Gated by `jamjet.agent.worker.enabled` (default `true`). |
 
 Every bean is `@ConditionalOnMissingBean`, so you can override any of them.
 
@@ -110,4 +110,7 @@ contract of the bare `Agent.runDurable` and the Python `agent.run_durable`.
 
 `@Tool` methods are discovered on the bean's user class. If a tool-holder is proxied (for
 example `@Transactional`), the starter resolves the raw target so the tools are still
-registered. Tools are then invoked directly on that target, bypassing the proxy's advice.
+registered. Tools are then invoked directly on that target, bypassing the proxy's advice. If
+a tool needs that advice — a surrounding transaction, retry, or metrics — apply it inside the
+`@Tool` method itself rather than relying on the proxy, which the worker's direct invocation
+skips.

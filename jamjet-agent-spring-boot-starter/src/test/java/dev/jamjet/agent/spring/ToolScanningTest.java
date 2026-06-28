@@ -11,6 +11,7 @@ import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Lazy;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -49,6 +50,21 @@ class ToolScanningTest {
     }
 
     @Test
+    void scansLazyToolBeanIntoTheRegistry() {
+        // A @Lazy @Tool bean is NOT created during preInstantiateSingletons, so the old
+        // singleton-only scan (beanFactory.getSingleton) saw null and silently dropped its
+        // tools — the same silent-tool-loss class as a missed CGLIB proxy. The definition
+        // scan must resolve the type WITHOUT forcing creation, then realize and register it.
+        runner.withUserConfiguration(LazyToolConfig.class).run(ctx -> {
+            ToolRegistry registry = ctx.getBean(ToolRegistry.class);
+            assertThat(registry.byName("lazy_now")).isNotNull();
+            assertThat(registry.tools())
+                    .extracting(RegisteredTool::name)
+                    .contains("lazy_now");
+        });
+    }
+
+    @Test
     void duplicateToolNamesAcrossBeansFailContextStartup() {
         runner.withUserConfiguration(DuplicateToolsConfig.class).run(ctx -> {
             assertThat(ctx).hasFailed();
@@ -82,6 +98,16 @@ class ToolScanningTest {
     }
 
     @Configuration(proxyBeanMethods = false)
+    static class LazyToolConfig {
+
+        @Bean
+        @Lazy
+        LazyTools lazyTools() {
+            return new LazyTools();
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
     static class DuplicateToolsConfig {
 
         @Bean
@@ -106,6 +132,13 @@ class ToolScanningTest {
         @Tool(name = "proxied_add", description = "Add two integers.")
         public int add(int a, int b) {
             return a + b;
+        }
+    }
+
+    public static class LazyTools {
+        @Tool(name = "lazy_now", description = "A tool authored on a @Lazy bean.")
+        public String now() {
+            return "now";
         }
     }
 
