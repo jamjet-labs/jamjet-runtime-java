@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>dev.jamjet</groupId>
+        <artifactId>jamjet-runtime-java-parent</artifactId>
+        <version>0.3.1</version>
+    </parent>
+
+    <artifactId>jamjet-agent-spring-boot-starter</artifactId>
+    <name>JamJet Agent Spring Boot Starter</name>
+    <description>
+        One-dependency Spring Boot authoring for the governed durable JamJet Agent:
+        auto-configures the engine client, a @Tool-scanned ToolRegistry, and a
+        lifecycle-managed JavaToolWorker. Wraps the framework-free jamjet-agent only —
+        no Spring AI / LangChain4j on the classpath.
+    </description>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-dependencies</artifactId>
+                <version>3.3.5</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <!-- The framework-free Java agent this starter wraps (pulls jamjet-runtime-core + jackson). -->
+        <dependency>
+            <groupId>dev.jamjet</groupId>
+            <artifactId>jamjet-agent</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- Spring Boot. Deliberately NO spring-boot-starter-web and NO spring-ai /
+             langchain4j: this starter talks to the Rust engine over the bare-route
+             JamjetEngineClient, so its bean types always link (no @ConditionalOnClass
+             NoClassDefFoundError class of bug). -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-configuration-processor</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Test -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>
