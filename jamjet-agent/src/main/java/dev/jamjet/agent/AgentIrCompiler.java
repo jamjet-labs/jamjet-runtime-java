@@ -2,6 +2,8 @@ package dev.jamjet.agent;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import dev.jamjet.agent.tools.RegisteredTool;
+import dev.jamjet.agent.tools.ToolDispatcher;
 import dev.jamjet.runtime.core.JamjetJson;
 import dev.jamjet.runtime.core.TimeoutConfig;
 import dev.jamjet.runtime.core.ir.ConditionalBranch;
@@ -57,9 +59,15 @@ final class AgentIrCompiler {
      * from state and fans out to the requested {@code @Tool} methods via the
      * {@link dev.jamjet.agent.tools.ToolRegistry}. (A single dispatcher per turn,
      * not one node per dynamic call, mirrors the Python loop exactly.)
+     *
+     * <p><b>Single source of truth.</b> These reference {@link ToolDispatcher}'s own
+     * constants — the SAME constants the {@link dev.jamjet.agent.worker.JavaToolWorker}
+     * RCE gate checks a claimed {@code java_fn} payload against. So the coordinate the
+     * builder <em>emits</em> and the coordinate the worker <em>accepts</em> are one
+     * literal and can never silently diverge (a B-3-review DRY fix).
      */
-    static final String DISPATCH_CLASS = "dev.jamjet.agent.tools.ToolDispatcher";
-    static final String DISPATCH_METHOD = "dispatchToolCalls";
+    static final String DISPATCH_CLASS = ToolDispatcher.DISPATCH_CLASS;
+    static final String DISPATCH_METHOD = ToolDispatcher.DISPATCH_METHOD;
 
     /** The condition the tool gate branches on (matches the Model executor's recorded finish reason). */
     static final String TOOL_CALLS_EXPR = "state.last_model_finish_reason == \"tool_calls\"";
@@ -280,6 +288,50 @@ final class AgentIrCompiler {
             return provider + "/" + rest;
         }
         return raw;
+    }
+
+    // -- durable-run initial state (mirrors agent_ir.build_initial_state) --------
+
+    /**
+     * The execution {@code initial_input} for a compiled agent-loop IR, mirroring the
+     * Python {@code build_initial_state}: it seeds the running {@code messages}
+     * (system + user prompt) plus the {@code {name: "class#method"}} tool-resolver map
+     * into workflow state, so the first Model node reads the messages and every
+     * {@code java_fn} tool node finds them. The Rust engine copies this verbatim into
+     * {@code current_state} at {@code start_execution} time.
+     *
+     * <p>The prompt is per-run and private, so it is seeded HERE (not embedded in the
+     * workflow definition) — the compiled IR's {@code description} never carries it.
+     */
+    static Map<String, Object> buildInitialState(Agent agent, String prompt) {
+        String system = blankToNull(agent.instructions()) != null
+                ? agent.instructions()
+                : "You are a helpful assistant.";
+
+        List<Map<String, Object>> messages = List.of(
+                Map.of("role", "system", "content", system),
+                Map.of("role", "user", "content", prompt == null ? "" : prompt));
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("messages", messages);
+        out.put("tools", toolsMap(agent));
+        return out;
+    }
+
+    /**
+     * {@code {tool_name: "class#method"}} — the Java analog of Python's {@code _tools_map}
+     * ({@code {name: "module:qualname"}}). Carried in the seeded state for shape-parity
+     * with the Python durable run; the Java {@code JavaToolWorker} resolves tools by name
+     * through its own {@link dev.jamjet.agent.tools.ToolRegistry}, so it does not consume
+     * this map (the dispatch coordinate is the same {@code class#method}, see
+     * {@link RegisteredTool#key()}).
+     */
+    static Map<String, String> toolsMap(Agent agent) {
+        Map<String, String> map = new LinkedHashMap<>();
+        for (RegisteredTool t : agent.registry().tools()) {
+            map.put(t.name(), t.key());
+        }
+        return map;
     }
 
     /**

@@ -1,5 +1,6 @@
 package dev.jamjet.agent;
 
+import dev.jamjet.agent.client.JamjetEngineClient;
 import dev.jamjet.agent.tools.ToolRegistry;
 import dev.jamjet.runtime.core.ir.PolicySetIr;
 import dev.jamjet.runtime.core.ir.WorkflowIr;
@@ -85,6 +86,67 @@ public final class Agent {
      */
     public WorkflowIr compileToIr(int maxTurns) {
         return AgentIrCompiler.compile(this, maxTurns);
+    }
+
+    // -- durable run (B-4) ------------------------------------------------------
+
+    /**
+     * Run this agent durably on the JamJet engine with the default {@link RunOptions}
+     * (local runtime, {@link #DEFAULT_MAX_TURNS} turns), returning the final assistant
+     * text + tool-call trace as an {@link AgentResult}. The Java mirror of the Python
+     * {@code Agent.run_durable}.
+     *
+     * <p>This compiles the agent to the agent-loop {@link WorkflowIr}, registers it
+     * ({@code POST /workflows}), starts an execution seeded with the system+user
+     * {@code messages} ({@code POST /executions}), polls {@code GET /executions/{id}}
+     * to a terminal state, and extracts the answer from the terminal
+     * {@code current_state.last_model_output} (falling back to the last assistant
+     * message). Every model call and tool dispatch runs through the durable engine, so
+     * the run is event-sourced, replayable, idempotent, and governed (budget / policy /
+     * PII enforced fail-closed from the compiled IR).
+     *
+     * <h2>Required running services (mirrors the Python {@code run_durable})</h2>
+     * A durable run is NOT self-contained — three services must be running:
+     * <ol>
+     *   <li><b>the JamJet engine</b> at {@link RunOptions#runtimeUrl()} (the
+     *       {@code jamjet-server} that owns the {@code java_tool} queue);</li>
+     *   <li><b>the model sidecar</b> ({@code JAMJET_MODEL_SEAM_URL}) — the engine routes
+     *       every governed model call through it (no Java model code);</li>
+     *   <li><b>a {@link dev.jamjet.agent.worker.JavaToolWorker}</b> draining the
+     *       {@code java_tool} queue with THIS agent's tool registry, so the
+     *       {@code @Tool} methods execute durably exactly-once. Run it in a separate
+     *       thread/process; {@code runDurable} does not start one.</li>
+     * </ol>
+     *
+     * @throws AgentRunException        if the run reaches a non-{@code completed} terminal
+     *                                  state ({@code failed} / {@code cancelled} /
+     *                                  {@code limit_exceeded})
+     * @throws AgentRunTimeoutException if no terminal state is reached before the deadline
+     */
+    public AgentResult runDurable(String prompt) {
+        return runDurable(prompt, RunOptions.defaults());
+    }
+
+    /**
+     * Run this agent durably with the given {@link RunOptions}, building (and closing) a
+     * {@link JamjetEngineClient} for {@link RunOptions#runtimeUrl()}. See
+     * {@link #runDurable(String)} for the running-services contract.
+     */
+    public AgentResult runDurable(String prompt, RunOptions options) {
+        try (JamjetEngineClient client =
+                     new JamjetEngineClient(options.runtimeUrl(), options.bearerToken(), options.tenantId())) {
+            return runDurable(prompt, client, options);
+        }
+    }
+
+    /**
+     * Run this agent durably over a caller-provided {@link JamjetEngineClient}. The
+     * caller owns the client's lifecycle (this overload does NOT close it), so a run
+     * and a {@link dev.jamjet.agent.worker.JavaToolWorker} can share one client against
+     * the same engine. See {@link #runDurable(String)} for the running-services contract.
+     */
+    public AgentResult runDurable(String prompt, JamjetEngineClient client, RunOptions options) {
+        return DurableRunner.run(this, prompt, client, options);
     }
 
     // -- accessors (read by AgentIrCompiler) ------------------------------------
