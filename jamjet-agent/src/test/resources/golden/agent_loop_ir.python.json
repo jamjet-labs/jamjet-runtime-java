@@ -1,0 +1,322 @@
+{
+  "workflow_id": "research_agent",
+  "version": "0.1.0+8476bdc8e9fb",
+  "name": "research_agent",
+  "description": "You are a helpful research assistant.",
+  "state_schema": "",
+  "start_node": "__model_0__",
+  "nodes": {
+    "__model_0__": {
+      "id": "__model_0__",
+      "kind": {
+        "type": "model",
+        "model_ref": "anthropic/claude-sonnet-4-6",
+        "prompt_ref": "",
+        "output_schema": "",
+        "system_prompt": "You are a helpful research assistant.",
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "web_search",
+              "description": "Search the web for a query.",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "query": "string"
+                },
+                "required": [
+                  "query"
+                ]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "add_numbers",
+              "description": "Add two integers.",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "a": "integer",
+                  "b": "integer"
+                },
+                "required": [
+                  "a",
+                  "b"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "retry_policy": "llm_default",
+      "node_timeout_secs": null,
+      "description": "agent turn 0 — model call",
+      "labels": {
+        "jamjet.agent.loop": "model",
+        "jamjet.agent.turn": "0"
+      }
+    },
+    "__tool_gate_0__": {
+      "id": "__tool_gate_0__",
+      "kind": {
+        "type": "condition",
+        "branches": [
+          {
+            "condition": "state.last_model_finish_reason == \"tool_calls\"",
+            "target": "__tools_0__"
+          },
+          {
+            "condition": null,
+            "target": "end"
+          }
+        ],
+        "expression": "state.last_model_finish_reason == \"tool_calls\""
+      },
+      "retry_policy": null,
+      "node_timeout_secs": null,
+      "description": "agent turn 0 — tool-call gate",
+      "labels": {
+        "jamjet.agent.loop": "gate",
+        "jamjet.agent.turn": "0"
+      }
+    },
+    "__tools_0__": {
+      "id": "__tools_0__",
+      "kind": {
+        "type": "python_fn",
+        "module": "jamjet.agents.tool_runtime",
+        "function": "dispatch_tool_calls",
+        "output_schema": "",
+        "input": {
+          "messages": "$state.messages",
+          "assistant_content": "$state.last_model_output",
+          "tool_calls": "$state.last_model_tool_calls",
+          "tools": {
+            "web_search": "__main__:web_search",
+            "add_numbers": "__main__:add_numbers"
+          }
+        }
+      },
+      "retry_policy": "no_retry",
+      "node_timeout_secs": null,
+      "description": "agent turn 0 — dispatch tool calls",
+      "labels": {
+        "jamjet.agent.loop": "tools",
+        "jamjet.agent.turn": "0"
+      }
+    },
+    "__model_1__": {
+      "id": "__model_1__",
+      "kind": {
+        "type": "model",
+        "model_ref": "anthropic/claude-sonnet-4-6",
+        "prompt_ref": "",
+        "output_schema": "",
+        "system_prompt": "You are a helpful research assistant.",
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "web_search",
+              "description": "Search the web for a query.",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "query": "string"
+                },
+                "required": [
+                  "query"
+                ]
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "add_numbers",
+              "description": "Add two integers.",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "a": "integer",
+                  "b": "integer"
+                },
+                "required": [
+                  "a",
+                  "b"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "retry_policy": "llm_default",
+      "node_timeout_secs": null,
+      "description": "agent turn 1 — model call",
+      "labels": {
+        "jamjet.agent.loop": "model",
+        "jamjet.agent.turn": "1"
+      }
+    },
+    "__tool_gate_1__": {
+      "id": "__tool_gate_1__",
+      "kind": {
+        "type": "condition",
+        "branches": [
+          {
+            "condition": "state.last_model_finish_reason == \"tool_calls\"",
+            "target": "__tools_1__"
+          },
+          {
+            "condition": null,
+            "target": "end"
+          }
+        ],
+        "expression": "state.last_model_finish_reason == \"tool_calls\""
+      },
+      "retry_policy": null,
+      "node_timeout_secs": null,
+      "description": "agent turn 1 — tool-call gate",
+      "labels": {
+        "jamjet.agent.loop": "gate",
+        "jamjet.agent.turn": "1"
+      }
+    },
+    "__tools_1__": {
+      "id": "__tools_1__",
+      "kind": {
+        "type": "python_fn",
+        "module": "jamjet.agents.tool_runtime",
+        "function": "dispatch_tool_calls",
+        "output_schema": "",
+        "input": {
+          "messages": "$state.messages",
+          "assistant_content": "$state.last_model_output",
+          "tool_calls": "$state.last_model_tool_calls",
+          "tools": {
+            "web_search": "__main__:web_search",
+            "add_numbers": "__main__:add_numbers"
+          }
+        }
+      },
+      "retry_policy": "no_retry",
+      "node_timeout_secs": null,
+      "description": "agent turn 1 — dispatch tool calls",
+      "labels": {
+        "jamjet.agent.loop": "tools",
+        "jamjet.agent.turn": "1"
+      }
+    },
+    "__model_2__": {
+      "id": "__model_2__",
+      "kind": {
+        "type": "model",
+        "model_ref": "anthropic/claude-sonnet-4-6",
+        "prompt_ref": "",
+        "output_schema": "",
+        "system_prompt": "You are a helpful research assistant.",
+        "tools": []
+      },
+      "retry_policy": "llm_default",
+      "node_timeout_secs": null,
+      "description": "agent turn 2 — final answer (no tools)",
+      "labels": {
+        "jamjet.agent.loop": "model",
+        "jamjet.agent.turn": "2",
+        "jamjet.agent.final": "true"
+      }
+    }
+  },
+  "edges": [
+    {
+      "from": "__model_0__",
+      "to": "__tool_gate_0__",
+      "condition": null
+    },
+    {
+      "from": "__tool_gate_0__",
+      "to": "__tools_0__",
+      "condition": "state.last_model_finish_reason == \"tool_calls\""
+    },
+    {
+      "from": "__tool_gate_0__",
+      "to": "end",
+      "condition": null
+    },
+    {
+      "from": "__tools_0__",
+      "to": "__model_1__",
+      "condition": null
+    },
+    {
+      "from": "__model_1__",
+      "to": "__tool_gate_1__",
+      "condition": null
+    },
+    {
+      "from": "__tool_gate_1__",
+      "to": "__tools_1__",
+      "condition": "state.last_model_finish_reason == \"tool_calls\""
+    },
+    {
+      "from": "__tool_gate_1__",
+      "to": "end",
+      "condition": null
+    },
+    {
+      "from": "__tools_1__",
+      "to": "__model_2__",
+      "condition": null
+    },
+    {
+      "from": "__model_2__",
+      "to": "end",
+      "condition": null
+    }
+  ],
+  "retry_policies": {},
+  "timeouts": {
+    "workflow_timeout": 300,
+    "heartbeat_interval": 30
+  },
+  "models": {},
+  "tools": {},
+  "mcp_servers": {},
+  "remote_agents": {},
+  "labels": {
+    "jamjet.agent.id": "research_agent",
+    "jamjet.agent.loop": "true",
+    "jamjet.agent.max_turns": "2"
+  },
+  "cost_budget_usd": 2.5,
+  "token_budget": {
+    "total_tokens": 100000
+  },
+  "policy": {
+    "blocked_tools": [
+      "delete_db"
+    ],
+    "require_approval_for": [
+      "delete_*"
+    ],
+    "model_allowlist": [
+      "anthropic/claude-sonnet-4-6"
+    ]
+  },
+  "data_policy": {
+    "pii_fields": [],
+    "pii_detectors": [
+      "email",
+      "ssn",
+      "credit_card",
+      "phone",
+      "ip_address"
+    ],
+    "redaction_mode": "mask",
+    "retain_prompts": false,
+    "retain_outputs": true
+  }
+}

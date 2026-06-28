@@ -30,6 +30,77 @@ class NodeKindSerializationTest {
     }
 
     @Test
+    void javaFnNodeRoundTrip() throws JsonProcessingException {
+        NodeKind original = new NodeKind.JavaFn("com.example.AgentTools", "dispatch", "");
+        String json = mapper.writeValueAsString(original);
+
+        // Exactly the Rust engine's Phase-A wire shape:
+        // JavaFn { class_name, method, output_schema } with the "java_fn" tag.
+        assertThat(json).contains("\"type\":\"java_fn\"");
+        assertThat(json).contains("\"class_name\":\"com.example.AgentTools\"");
+        assertThat(json).contains("\"method\":\"dispatch\"");
+        assertThat(json).contains("\"output_schema\":\"\"");
+        // It must NOT leak the camelCase Java property name.
+        assertThat(json).doesNotContain("className");
+
+        NodeKind deserialized = mapper.readValue(json, NodeKind.class);
+        assertThat(deserialized).isEqualTo(original);
+        assertThat(deserialized).isInstanceOf(NodeKind.JavaFn.class);
+    }
+
+    @Test
+    void modelNodeCarriesToolSchemas() throws JsonProcessingException {
+        var schema = Map.<String, Object>of(
+                "type", "function",
+                "function", Map.of(
+                        "name", "web_search",
+                        "description", "Search the web.",
+                        "parameters", Map.of(
+                                "type", "object",
+                                "properties", Map.of("query", "string"),
+                                "required", List.of("query"))));
+        NodeKind original = new NodeKind.Model("gpt4", "", "", "be helpful", List.of(schema));
+        String json = mapper.writeValueAsString(original);
+
+        assertThat(json).contains("\"type\":\"model\"");
+        assertThat(json).contains("\"tools\":[");
+        assertThat(json).contains("\"name\":\"web_search\"");
+
+        NodeKind deserialized = mapper.readValue(json, NodeKind.class);
+        assertThat(deserialized).isEqualTo(original);
+        assertThat(((NodeKind.Model) deserialized).tools()).hasSize(1);
+    }
+
+    @Test
+    void modelNodeWithoutToolsEmitsEmptyToolsArray() throws JsonProcessingException {
+        // The 4-arg back-compat constructor offers no tools; it serializes as
+        // "tools":[] (never null), matching the Rust #[serde(default)] Vec and
+        // the Python final-answer node's "tools": [].
+        NodeKind original = new NodeKind.Model("gpt4", "", "", null);
+        String json = mapper.writeValueAsString(original);
+        assertThat(json).contains("\"tools\":[]");
+
+        NodeKind deserialized = mapper.readValue(json, NodeKind.class);
+        assertThat(deserialized).isEqualTo(original);
+        assertThat(((NodeKind.Model) deserialized).tools()).isEmpty();
+    }
+
+    @Test
+    void computedHelpersNeverSerialize() throws JsonProcessingException {
+        // queueType()/isDurable() are computed routing helpers, not IR fields:
+        // they must not leak onto the wire (the Rust NodeKind has no such field).
+        for (NodeKind kind : List.of(
+                new NodeKind.Model("m", null, null, null),
+                new NodeKind.JavaFn("C", "m", ""),
+                new NodeKind.Condition(List.of()))) {
+            String json = mapper.writeValueAsString(kind);
+            assertThat(json).doesNotContain("durable");
+            assertThat(json).doesNotContain("queue_type");
+            assertThat(json).doesNotContain("queueType");
+        }
+    }
+
+    @Test
     void toolNodeRoundTrip() throws JsonProcessingException {
         NodeKind original = new NodeKind.Tool("search_tool", Map.of("query", "$.input.query"), "{}");
         String json = mapper.writeValueAsString(original);
@@ -83,6 +154,7 @@ class NodeKindSerializationTest {
         assertThat(new NodeKind.Model("m", null, null, null).queueType()).isEqualTo(QueueType.MODEL);
         assertThat(new NodeKind.Tool("t", null, null).queueType()).isEqualTo(QueueType.TOOL);
         assertThat(new NodeKind.PythonFn("m", "f", null).queueType()).isEqualTo(QueueType.PYTHON_TOOL);
+        assertThat(new NodeKind.JavaFn("C", "m", null).queueType()).isEqualTo(QueueType.JAVA_TOOL);
         assertThat(new NodeKind.MemoryRetrieval("c", "q", null).queueType()).isEqualTo(QueueType.RETRIEVAL);
         assertThat(new NodeKind.Finalizer("t", FinalizerTrigger.ALWAYS).queueType()).isEqualTo(QueueType.TOOL);
         assertThat(new NodeKind.McpTool("s", "t", null, null).queueType()).isEqualTo(QueueType.TOOL);

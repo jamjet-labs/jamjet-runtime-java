@@ -7,6 +7,7 @@ public enum QueueType {
     MODEL("model"),
     TOOL("tool"),
     PYTHON_TOOL("python_tool"),
+    JAVA_TOOL("java_tool"),
     RETRIEVAL("retrieval"),
     PRIVILEGED("privileged"),
     GENERAL("general");
