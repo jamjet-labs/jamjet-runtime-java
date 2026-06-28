@@ -102,8 +102,10 @@ public final class Agent {
      * to a terminal state, and extracts the answer from the terminal
      * {@code current_state.last_model_output} (falling back to the last assistant
      * message). Every model call and tool dispatch runs through the durable engine, so
-     * the run is event-sourced, replayable, idempotent, and governed (budget / policy /
-     * PII enforced fail-closed from the compiled IR).
+     * the run is event-sourced, replayable, idempotent, and governed: budget and policy
+     * (the model allowlist plus approval gates) are enforced fail-closed by the engine,
+     * and PII redaction is applied at the model-seam sidecar (the {@code data_policy} IR
+     * signals it; redaction is the sidecar's job, not an IR-level guarantee).
      *
      * <h2>Required running services (mirrors the Python {@code run_durable})</h2>
      * A durable run is NOT self-contained — three services must be running:
