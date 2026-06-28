@@ -17,6 +17,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
@@ -233,6 +235,52 @@ class JavaToolWorkerTest {
         // CRITICAL: the reclaimed item was NEVER completed and NEVER failed by this worker.
         wm.verify(0, postRequestedFor(urlEqualTo("/work-items/wi_1/complete")));
         wm.verify(0, postRequestedFor(urlEqualTo("/work-items/wi_1/fail")));
+    }
+
+    @Test
+    @Timeout(15)
+    void interruptedDispatchIsNotAToolFailureAndExitsCleanly() throws InterruptedException {
+        // The WORKER thread is interrupted (shutdown / cancellation) while it blocks on
+        // dispatchFuture.get(). That is NOT a tool failure: the item must be left for the
+        // engine to reclaim on lease expiry, never failed (which would clobber a reclaimer).
+        Map<String, Object> input = Map.of(
+                "last_model_tool_calls", List.of(toolCall("tc1", "slow_tool", Map.of("ignored", "x"))));
+
+        wm.stubFor(post(urlEqualTo("/work-items/claim")).willReturn(okJson(validClaim(input, 7))));
+        wm.stubFor(post(urlEqualTo("/work-items/wi_1/complete")).willReturn(ok()));
+        // Heartbeat interval is far longer than the test: the ONLY signal is the interrupt,
+        // so this isolates the interrupt path from the M3 heartbeat-abort path.
+        wm.stubFor(post(urlEqualTo("/work-items/wi_1/heartbeat")).willReturn(ok()));
+        wm.stubFor(post(urlEqualTo("/work-items/wi_1/fail")).willReturn(ok()));
+
+        SlowTool slow = new SlowTool();
+        AtomicReference<JavaToolWorker.ItemResult> resultRef = new AtomicReference<>();
+        CountDownLatch done = new CountDownLatch(1);
+
+        try (var client = new JamjetEngineClient(wm.baseUrl());
+             var worker = new JavaToolWorker(client, "w1",
+                     ToolRegistry.of(slow),
+                     Duration.ofSeconds(30), Duration.ofMillis(10))) {
+
+            Thread runner = new Thread(() -> {
+                try {
+                    resultRef.set(worker.runOnce());
+                } finally {
+                    done.countDown();
+                }
+            }, "worker-runner");
+            runner.start();
+
+            // Once the tool is actually executing, interrupt the worker thread mid-get().
+            assertThat(slow.started.await(5, TimeUnit.SECONDS)).isTrue();
+            runner.interrupt();
+            assertThat(done.await(5, TimeUnit.SECONDS)).isTrue();
+        }
+
+        // A clean stop (no-op), NOT a failure: the item was neither failed nor completed.
+        assertThat(resultRef.get()).isEqualTo(JavaToolWorker.ItemResult.LOST_LEASE);
+        wm.verify(0, postRequestedFor(urlEqualTo("/work-items/wi_1/fail")));
+        wm.verify(0, postRequestedFor(urlEqualTo("/work-items/wi_1/complete")));
     }
 
     @Test

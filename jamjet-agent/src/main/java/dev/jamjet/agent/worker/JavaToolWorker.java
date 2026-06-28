@@ -80,7 +80,11 @@ public final class JavaToolWorker implements AutoCloseable {
         COMPLETED,
         /** A genuine tool / dispatch / completion error; the item was failed. */
         FAILED,
-        /** The lease was lost (heartbeat abort or a 409 on complete); a no-op, NOT a failure. */
+        /**
+         * The item was abandoned without failing it: the lease was lost (heartbeat abort or
+         * a 409 on complete), or the worker was interrupted mid-dispatch (shutdown). A no-op,
+         * NOT a failure — the engine reclaims the item on lease expiry.
+         */
         LOST_LEASE
     }
 
@@ -193,18 +197,26 @@ public final class JavaToolWorker implements AutoCloseable {
             Map<String, Object> output;
             try {
                 output = dispatchFuture.get();
-            } catch (CancellationException | InterruptedException | ExecutionException e) {
-                if (Thread.interrupted()) {
-                    // restore the flag for the caller; we're exiting this item anyway
-                    Thread.currentThread().interrupt();
-                }
-                // Lease-lost gate FIRST: if the heartbeat aborted us, this is a no-op,
-                // never a failure (the new claimant owns the item now).
+            } catch (InterruptedException e) {
+                // Worker shutdown / cancellation (the WORKER thread was interrupted while
+                // waiting) is NOT a tool failure. Restore the interrupt and stop cleanly so
+                // the engine reclaims the item on lease expiry — never fail a reclaimable
+                // item (the same invariant as a lost lease). Best-effort: stop the in-flight
+                // tool so a side-effecting call doesn't keep running after we abandon it.
+                Thread.currentThread().interrupt();
+                dispatchFuture.cancel(true);
+                LOG.log(Level.INFO, () -> "worker interrupted mid-dispatch; abandoning item "
+                        + item.id() + " for reclaim (not failing)");
+                return ItemResult.LOST_LEASE;
+            } catch (CancellationException | ExecutionException e) {
+                // Lease-lost gate FIRST: if the heartbeat aborted us (Future.cancel), this is
+                // a no-op, never a failure (the new claimant owns the item now).
                 if (leaseLost.get()) {
                     LOG.log(Level.INFO, () -> "lease lost mid-dispatch; aborting item " + item.id() + " (not completing)");
                     return ItemResult.LOST_LEASE;
                 }
-                // A genuine tool / dispatch failure -> fail the item (mirror Python).
+                // A genuine tool / dispatch failure -> fail the item (mirror Python). An
+                // ExecutionException here wraps the real tool error.
                 Throwable cause = (e instanceof ExecutionException) ? e.getCause() : e;
                 String err = cause == null ? String.valueOf(e) : String.valueOf(cause.getMessage() != null ? cause.getMessage() : cause);
                 LOG.log(Level.WARNING, () -> "tool dispatch failed for item " + item.id() + ": " + err);
@@ -269,7 +281,9 @@ public final class JavaToolWorker implements AutoCloseable {
                 return;
             }
             try {
-                client.heartbeatWorkItem(item.id(), workerId, fence);
+                // Echo the claim's fence (null only for a legacy unfenced claim), matching
+                // the nullable contract the complete path uses.
+                client.heartbeatWorkItem(item.id(), workerId, fence == 0L ? null : fence);
             } catch (JamjetHttpException e) {
                 if (e.statusCode() >= 400) {
                     // Definitive engine rejection: the lease is gone (FenceLost -> 500,

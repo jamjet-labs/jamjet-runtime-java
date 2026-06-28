@@ -199,13 +199,19 @@ public final class JamjetEngineClient implements AutoCloseable {
 
     /**
      * {@code POST /work-items/{id}/heartbeat} — renew the lease.
-     * Body {@code {worker_id, lease_fence}}; the fence must match the claim's value
+     * Body {@code {worker_id, lease_fence?}}; the fence must match the claim's value
      * or the engine rejects the renewal.
+     *
+     * <p>{@code leaseFence} is nullable — consistent with {@link #completeWorkItem} and
+     * {@link ClaimedWorkItem#leaseFence()} — and included in the body only when non-null.
+     * For a real fenced claim it is always present; null is only the legacy unfenced case.
      */
-    public void heartbeatWorkItem(String itemId, String workerId, long leaseFence) {
+    public void heartbeatWorkItem(String itemId, String workerId, Long leaseFence) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("worker_id", workerId);
-        body.put("lease_fence", leaseFence);
+        if (leaseFence != null) {
+            body.put("lease_fence", leaseFence);
+        }
         execute(buildPost("/work-items/" + itemId + "/heartbeat", body));
     }
 

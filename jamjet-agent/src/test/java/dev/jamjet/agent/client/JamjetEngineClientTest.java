@@ -188,6 +188,22 @@ class JamjetEngineClientTest {
     }
 
     @Test
+    void heartbeatOmitsLeaseFenceWhenNull() {
+        wm.stubFor(post(urlEqualTo("/work-items/wi_nf/heartbeat")).willReturn(ok()));
+
+        var client = new JamjetEngineClient(wm.baseUrl());
+        // A null fence (legacy unfenced claim) must be omitted from the body, mirroring the
+        // nullable contract of completeWorkItem.
+        client.heartbeatWorkItem("wi_nf", "w1", null);
+
+        List<LoggedRequest> reqs = wm.findAll(postRequestedFor(urlEqualTo("/work-items/wi_nf/heartbeat")));
+        assertThat(reqs).hasSize(1);
+        String body = reqs.get(0).getBodyAsString();
+        assertThat(body).doesNotContain("lease_fence");
+        assertThat(body).contains("worker_id");
+    }
+
+    @Test
     void staleFenceCompleteSurfacesAsConflict() {
         wm.stubFor(post(urlEqualTo("/work-items/wi_stale/complete"))
                 .willReturn(aResponse().withStatus(409).withBody("{\"error\":\"stale lease fence\"}")));

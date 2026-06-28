@@ -11,13 +11,18 @@ package dev.jamjet.agent.tools;
  * <p>An <em>unknown</em>/unregistered tool name does NOT raise this — it is surfaced
  * to the model as a clean {@code role: tool} error message instead, so a hallucinated
  * name cannot fail the run (and, critically, never triggers an arbitrary invocation).
+ *
+ * <p>The surfaced message stays generic (the tool name only). The raw cause is retained
+ * as the exception {@code cause} (for stack traces) but deliberately NOT embedded in the
+ * message text, because that message is logged and persisted to the engine via
+ * {@code failWorkItem}, where a raw {@code cause.toString()} could leak sensitive detail.
  */
 public final class ToolInvocationException extends RuntimeException {
 
     private final String toolName;
 
     public ToolInvocationException(String toolName, Throwable cause) {
-        super("tool '" + toolName + "' failed: " + (cause == null ? "unknown error" : cause.toString()), cause);
+        super("tool '" + toolName + "' failed", cause);
         this.toolName = toolName;
     }
 

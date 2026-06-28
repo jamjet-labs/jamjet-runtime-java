@@ -46,6 +46,11 @@ public record RunOptions(
         if (pollInterval == null || pollInterval.isNegative() || pollInterval.isZero()) {
             throw new IllegalArgumentException("pollInterval must be positive");
         }
+        // timeout is nullable (null = derive from the agent's timeoutSeconds); when set it
+        // must be a positive duration, never zero/negative.
+        if (timeout != null && (timeout.isNegative() || timeout.isZero())) {
+            throw new IllegalArgumentException("timeout must be positive when set");
+        }
     }
 
     /** The default options: {@code maxTurns=8}, local runtime, no auth, 500ms poll, agent-derived timeout. */

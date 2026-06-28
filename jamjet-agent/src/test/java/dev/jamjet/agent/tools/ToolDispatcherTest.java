@@ -30,6 +30,17 @@ class ToolDispatcherTest {
         }
     }
 
+    /** A tool that records whether it was invoked, to prove a null-coerced call never happens. */
+    public static final class GreetTool {
+        volatile boolean invoked = false;
+
+        @Tool(name = "greet", description = "greets a person")
+        public String greet(String name) {
+            invoked = true;
+            return "hello " + name;
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private static List<Map<String, Object>> messagesOf(Map<String, Object> out) {
         assertThat(out).containsKey("messages");
@@ -122,6 +133,45 @@ class ToolDispatcherTest {
         assertThat((String) messages.get(1).get("content"))
                 .contains("not a registered @Tool")
                 .contains("java.lang.Runtime");
+    }
+
+    @Test
+    void missingRequiredArgYieldsCleanToolErrorNotANullCall() {
+        // Every @Tool param is required (buildInputSchema marks them all). A call missing
+        // a required arg must surface a clean role:tool error to the model, NOT invoke the
+        // tool with a null-coerced argument.
+        GreetTool greet = new GreetTool();
+        var dispatcher = new ToolDispatcher(ToolRegistry.of(greet));
+
+        Map<String, Object> state = Map.of(
+                "last_model_tool_calls",
+                List.of(toolCall("tc1", "greet", Map.of()))); // no "name" arg
+
+        Map<String, Object> out = dispatcher.dispatchToolCalls(state); // must NOT throw
+        List<Map<String, Object>> messages = messagesOf(out);
+        assertThat(messages.get(1))
+                .containsEntry("role", "tool")
+                .containsEntry("tool_call_id", "tc1");
+        assertThat((String) messages.get(1).get("content"))
+                .contains("missing required argument")
+                .contains("name");
+        // CRITICAL: the tool was never invoked with a null arg.
+        assertThat(greet.invoked).isFalse();
+    }
+
+    @Test
+    void toolInvocationExceptionMessageDoesNotLeakCauseDetail() {
+        // The surfaced message is logged + persisted to the engine via failWorkItem, so it
+        // must stay generic (tool name only) — never embed the raw cause.toString().
+        ToolInvocationException ex = new ToolInvocationException(
+                "wire_money", new IllegalStateException("secret-account-9988"));
+        assertThat(ex.getMessage())
+                .contains("wire_money")
+                .doesNotContain("secret-account-9988")
+                .doesNotContain("IllegalStateException");
+        // The cause is retained as the exception cause (just not in the message text).
+        assertThat(ex.getCause()).isInstanceOf(IllegalStateException.class);
+        assertThat(ex.toolName()).isEqualTo("wire_money");
     }
 
     @Test

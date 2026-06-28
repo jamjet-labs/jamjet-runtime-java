@@ -74,6 +74,9 @@ public final class ToolRegistry {
      * method-name order. Returns {@code this} for chaining.
      *
      * @throws IllegalArgumentException if two registered tools share a name
+     * @throws IllegalStateException    if two {@code @Tool} methods overload the same
+     *                                  class+method dispatch key (which would corrupt
+     *                                  {@link #byClassAndMethod} dispatch)
      */
     public ToolRegistry register(Object holder) {
         if (holder == null) {
@@ -101,13 +104,24 @@ public final class ToolRegistry {
             RegisteredTool rt = new RegisteredTool(
                     name, description, clazz.getName(), m.getName(), m, holder, inputSchema, openAi);
 
+            String key = rt.key();
             if (byName.containsKey(name)) {
                 throw new IllegalArgumentException(
                         "Duplicate @Tool name '" + name + "' (from " + clazz.getName() + "#" + m.getName()
                                 + "); tool names must be unique within an agent.");
             }
+            // Overloaded @Tool methods (same declaring class + method name, but distinct
+            // @Tool names) collide on the class+method dispatch key. Silently letting the
+            // second overwrite the first would corrupt byClassAndMethod, so reject it.
+            if (byKey.containsKey(key)) {
+                throw new IllegalStateException(
+                        "Overloaded @Tool method '" + clazz.getName() + "#" + m.getName()
+                                + "': another @Tool already maps to the same class+method dispatch key '"
+                                + key + "'. Tool dispatch keys on class+method, so overloads collide; "
+                                + "give each @Tool a distinct method name.");
+            }
             tools.add(rt);
-            byKey.put(rt.key(), rt);
+            byKey.put(key, rt);
             byName.put(name, rt);
         }
         return this;

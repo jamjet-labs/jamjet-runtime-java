@@ -6,10 +6,13 @@ import dev.jamjet.runtime.core.JamjetJson;
 import dev.jamjet.runtime.core.QueueType;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class NodeKindSerializationTest {
 
@@ -83,6 +86,60 @@ class NodeKindSerializationTest {
         NodeKind deserialized = mapper.readValue(json, NodeKind.class);
         assertThat(deserialized).isEqualTo(original);
         assertThat(((NodeKind.Model) deserialized).tools()).isEmpty();
+    }
+
+    @Test
+    void modelToolSchemasAreDeeplyImmutable() {
+        // A Model node freezes its tool schemas all the way down: mutating the SOURCE
+        // structures after construction must not leak in, and the node's nested maps are
+        // themselves unmodifiable (the outer-list-only copy of List.copyOf was not enough).
+        Map<String, Object> nestedProps = new LinkedHashMap<>();
+        nestedProps.put("query", "string");
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("type", "object");
+        params.put("properties", nestedProps);
+        Map<String, Object> tool = new LinkedHashMap<>();
+        tool.put("name", "web_search");
+        tool.put("parameters", params);
+        List<Map<String, Object>> mutableTools = new ArrayList<>();
+        mutableTools.add(tool);
+
+        NodeKind.Model model = new NodeKind.Model("gpt4", "", "", "be helpful", mutableTools);
+
+        // Mutating the source structures must NOT affect the node (deep copy).
+        nestedProps.put("injected", "boom");
+        mutableTools.add(Map.of("name", "evil"));
+
+        assertThat(model.tools()).hasSize(1);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> p = (Map<String, Object>) model.tools().get(0).get("parameters");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> props = (Map<String, Object>) p.get("properties");
+        assertThat(props).doesNotContainKey("injected");
+
+        // The node's nested maps are unmodifiable.
+        assertThatThrownBy(() -> model.tools().get(0).put("x", "y"))
+                .isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> props.put("x", "y"))
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    void deserializesOlderModelJsonWithoutToolsFieldToEmpty() throws JsonProcessingException {
+        // Back-compat: older Model JSON had NO `tools` field at all. Jackson must default
+        // it to an empty list (compact ctor maps null -> List.of()), matching the Rust
+        // #[serde(default)] Vec, and round-trip to the canonical "tools":[] shape.
+        String olderJson = "{\"type\":\"model\",\"model_ref\":\"gpt4\","
+                + "\"prompt_ref\":\"summarize\",\"output_schema\":\"{}\","
+                + "\"system_prompt\":\"You are helpful\"}";
+
+        NodeKind deserialized = mapper.readValue(olderJson, NodeKind.class);
+        assertThat(deserialized).isInstanceOf(NodeKind.Model.class);
+        assertThat(((NodeKind.Model) deserialized).tools()).isEmpty();
+
+        String reserialized = mapper.writeValueAsString(deserialized);
+        assertThat(reserialized).contains("\"tools\":[]");
+        assertThat(mapper.readValue(reserialized, NodeKind.class)).isEqualTo(deserialized);
     }
 
     @Test

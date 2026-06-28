@@ -1,6 +1,7 @@
 package dev.jamjet.agent.tools;
 
 import dev.jamjet.agent.TestTools;
+import dev.jamjet.agent.Tool;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -101,6 +102,31 @@ class ToolRegistryTest {
                 new TestTools.WebSearchTool(), new TestTools.WebSearchTool()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Duplicate @Tool name 'web_search'");
+    }
+
+    /**
+     * Two {@code @Tool} overloads (same Java method name) collide on the class+method
+     * dispatch key, even with distinct {@code @Tool.name}s. The second would silently
+     * overwrite the first in {@code byClassAndMethod} and corrupt dispatch, so
+     * registration must reject it loudly.
+     */
+    public static final class OverloadedTools {
+        @Tool(name = "compute_one", description = "first overload")
+        public String compute(String a) {
+            return a;
+        }
+
+        @Tool(name = "compute_two", description = "second overload")
+        public String compute(int a) {
+            return String.valueOf(a);
+        }
+    }
+
+    @Test
+    void rejectsOverloadedToolMethodsSameClassAndMethod() {
+        assertThatThrownBy(() -> ToolRegistry.of(new OverloadedTools()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("compute");
     }
 
     @Test

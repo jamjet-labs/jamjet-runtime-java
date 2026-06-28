@@ -2,6 +2,9 @@ package dev.jamjet.agent.examples;
 
 import dev.jamjet.agent.Tool;
 
+import java.math.BigDecimal;
+import java.math.MathContext;
+
 /**
  * A tiny tool-holder for the {@link CalculatorAgentExample}: one {@code @Tool} method
  * the model can call to do exact arithmetic. Idiomatic Java — a plain class with a
@@ -21,17 +24,32 @@ public final class CalculatorTools {
      */
     @Tool(name = "calculate", description = "Evaluate a binary arithmetic operation: add, subtract, multiply, or divide.")
     public String calculate(double a, double b, String op) {
-        double result = switch (op) {
-            case "add" -> a + b;
-            case "subtract" -> a - b;
-            case "multiply" -> a * b;
-            case "divide" -> a / b;
-            default -> throw new IllegalArgumentException("unknown op: " + op);
-        };
-        // Render whole-number results without a trailing ".0" for clean tool output.
-        if (result == Math.rint(result) && !Double.isInfinite(result)) {
-            return String.valueOf((long) result);
+        // Exact decimal arithmetic via BigDecimal: avoids binary-float noise (0.1 + 0.2)
+        // and lets divide-by-zero be a clean error rather than producing "Infinity".
+        // valueOf(double) uses the canonical short decimal string, so "0.1" stays "0.1".
+        BigDecimal x = BigDecimal.valueOf(a);
+        BigDecimal y = BigDecimal.valueOf(b);
+        BigDecimal result;
+        switch (op) {
+            case "add" -> result = x.add(y);
+            case "subtract" -> result = x.subtract(y);
+            case "multiply" -> result = x.multiply(y);
+            case "divide" -> {
+                if (y.signum() == 0) {
+                    return "ERROR: division by zero";
+                }
+                result = x.divide(y, MathContext.DECIMAL64);
+            }
+            default -> {
+                return "ERROR: unknown op '" + op + "' (expected add, subtract, multiply, or divide)";
+            }
         }
-        return String.valueOf(result);
+        // Render whole-number results without a trailing ".0"; otherwise strip trailing
+        // zeros and render in plain (non-scientific) decimal notation.
+        result = result.stripTrailingZeros();
+        if (result.scale() <= 0) {
+            return result.toBigInteger().toString();
+        }
+        return result.toPlainString();
     }
 }

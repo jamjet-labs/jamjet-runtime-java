@@ -5,6 +5,9 @@ import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import dev.jamjet.runtime.core.QueueType;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -67,12 +70,54 @@ public sealed interface NodeKind {
             // call (mirrors the Rust Model.tools / Python agent_ir _model_kind).
             // Empty (never null) means no tools are offered; it serializes as
             // "tools":[] matching the Rust #[serde(default)] Vec field.
-            tools = tools == null ? List.of() : List.copyOf(tools);
+            //
+            // Deep-copy + freeze ALL THE WAY DOWN: List.copyOf only freezes the outer
+            // list, leaving nested schema maps/lists mutable so a caller could mutate a
+            // node's tool schema post-construction. The serde shape is unchanged.
+            tools = deepImmutableTools(tools);
         }
 
         /** Back-compat constructor: a Model node offering no tools (plain text completion). */
         public Model(String modelRef, String promptRef, String outputSchema, String systemPrompt) {
             this(modelRef, promptRef, outputSchema, systemPrompt, List.of());
+        }
+
+        private static List<Map<String, Object>> deepImmutableTools(List<Map<String, Object>> tools) {
+            if (tools == null || tools.isEmpty()) {
+                return List.of();
+            }
+            List<Map<String, Object>> out = new ArrayList<>(tools.size());
+            for (Map<String, Object> tool : tools) {
+                out.add(deepImmutableMap(tool));
+            }
+            return Collections.unmodifiableList(out);
+        }
+
+        @SuppressWarnings("unchecked")
+        private static Map<String, Object> deepImmutableMap(Map<String, Object> map) {
+            if (map == null || map.isEmpty()) {
+                return Map.of();
+            }
+            LinkedHashMap<String, Object> copy = new LinkedHashMap<>(map.size());
+            for (Map.Entry<String, Object> e : map.entrySet()) {
+                copy.put(e.getKey(), deepImmutableValue(e.getValue()));
+            }
+            return Collections.unmodifiableMap(copy);
+        }
+
+        @SuppressWarnings("unchecked")
+        private static Object deepImmutableValue(Object value) {
+            if (value instanceof Map<?, ?> m) {
+                return deepImmutableMap((Map<String, Object>) m);
+            }
+            if (value instanceof List<?> list) {
+                List<Object> out = new ArrayList<>(list.size());
+                for (Object e : list) {
+                    out.add(deepImmutableValue(e));
+                }
+                return Collections.unmodifiableList(out);
+            }
+            return value;
         }
     }
 

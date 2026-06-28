@@ -134,6 +134,14 @@ public final class ToolDispatcher {
         }
 
         Method method = tool.method();
+        // Required-arg gate: every @Tool parameter is required (ToolRegistry.buildInputSchema
+        // marks them all). A call that omits one must surface a clean role:tool error to the
+        // model, NOT invoke the tool with a null-coerced (or primitive-defaulted) argument.
+        List<String> missing = missingRequiredArgs(method, arguments);
+        if (!missing.isEmpty()) {
+            return "ERROR: tool '" + name + "' missing required argument(s): " + String.join(", ", missing);
+        }
+
         Object[] args = coerceToParameters(method, arguments);
         try {
             method.setAccessible(true);
@@ -148,9 +156,26 @@ public final class ToolDispatcher {
     }
 
     /**
+     * The names of the tool's required parameters that are absent from {@code arguments}.
+     * Every {@code @Tool} parameter is required (parity with the emitted schema), so any
+     * parameter whose name is not a key is missing. A present-but-{@code null} value is the
+     * model's explicit choice and is left to the tool.
+     */
+    private static List<String> missingRequiredArgs(Method method, Map<String, Object> arguments) {
+        List<String> missing = new ArrayList<>();
+        for (Parameter p : method.getParameters()) {
+            if (!arguments.containsKey(p.getName())) {
+                missing.add(p.getName());
+            }
+        }
+        return missing;
+    }
+
+    /**
      * Coerce the JSON argument map to the method's typed positional parameters via
      * Jackson, matching each parameter by its (compiled {@code -parameters}) name.
-     * A missing argument coerces to {@code null} (or the primitive default).
+     * Callers must have already rejected missing required args (see
+     * {@link #missingRequiredArgs}); a present-but-null value coerces to {@code null}.
      */
     private Object[] coerceToParameters(Method method, Map<String, Object> arguments) {
         Parameter[] params = method.getParameters();

@@ -308,8 +308,11 @@ public final class Agent {
             return this;
         }
 
-        /** The workflow timeout in seconds (default 300). */
+        /** The workflow timeout in seconds (default 300; must be positive). */
         public Builder timeoutSeconds(int timeoutSeconds) {
+            if (timeoutSeconds <= 0) {
+                throw new IllegalArgumentException("timeoutSeconds must be positive (got " + timeoutSeconds + ")");
+            }
             this.timeoutSeconds = timeoutSeconds;
             return this;
         }
@@ -317,6 +320,9 @@ public final class Agent {
         /** Build the immutable {@link Agent}. */
         public Agent build() {
             Objects.requireNonNull(model, "agent model must be set");
+            if (model.isBlank()) {
+                throw new IllegalArgumentException("agent model must not be blank");
+            }
             return new Agent(this);
         }
     }
