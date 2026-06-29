@@ -15,7 +15,7 @@ the model-seam sidecar, so its bean types always link.
 <dependency>
     <groupId>dev.jamjet</groupId>
     <artifactId>jamjet-agent-spring-boot-starter</artifactId>
-    <version>0.3.1</version>
+    <version>0.4.0</version>
 </dependency>
 ```
 
