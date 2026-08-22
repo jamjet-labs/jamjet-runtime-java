@@ -176,18 +176,20 @@ public final class JavaToolWorker implements AutoCloseable {
         // RCE GATE (dispatch coordinate): the only java_fn coordinate the Agent builder
         // emits is the fixed ToolDispatcher. A payload naming any other class/method is
         // a forged/unknown node: fail cleanly, NEVER Class.forName a payload string.
+        // Read the fence before the gate below: a rejection is still a settle, and an
+        // unfenced settle emits no NodeFailed, so the node stays scheduled forever.
+        long fence = item.leaseFence() == null ? 0L : item.leaseFence();
+
         String cls = String.valueOf(payload.get("class"));
         String method = String.valueOf(payload.get("method"));
         if (!ToolDispatcher.DISPATCH_CLASS.equals(cls) || !ToolDispatcher.DISPATCH_METHOD.equals(method)) {
             String msg = "unsupported java_fn dispatch coordinate: " + cls + "#" + method
                     + " (only " + ToolDispatcher.DISPATCH_CLASS + "#" + ToolDispatcher.DISPATCH_METHOD + " is callable)";
             LOG.log(Level.WARNING, () -> "rejecting work item " + item.id() + ": " + msg);
-            client.failWorkItem(item.id(), msg);
-            return ItemResult.FAILED;
+            return fail(item, msg, fence);
         }
 
         Map<String, Object> input = asMap(payload.get("input"));
-        long fence = item.leaseFence() == null ? 0L : item.leaseFence();
         AtomicBoolean leaseLost = new AtomicBoolean(false);
 
         long startNanos = System.nanoTime();
@@ -220,8 +222,7 @@ public final class JavaToolWorker implements AutoCloseable {
                 Throwable cause = (e instanceof ExecutionException) ? e.getCause() : e;
                 String err = cause == null ? String.valueOf(e) : String.valueOf(cause.getMessage() != null ? cause.getMessage() : cause);
                 LOG.log(Level.WARNING, () -> "tool dispatch failed for item " + item.id() + ": " + err);
-                client.failWorkItem(item.id(), err);
-                return ItemResult.FAILED;
+                return fail(item, err, fence);
             }
 
             // Dispatch succeeded. If the lease was lost during/just after it, do NOT
@@ -238,6 +239,32 @@ public final class JavaToolWorker implements AutoCloseable {
         }
     }
 
+
+    /**
+     * Fail the item, threading the lease fence; a 409 is a lost-lease no-op.
+     *
+     * <p>Mirrors {@link #complete}: the fence makes the engine emit {@code NodeFailed},
+     * so the node is retried or dead-lettered instead of staying scheduled forever.
+     * A 409 means the lease was reclaimed and a NEW worker owns the item — reporting
+     * our failure would kill work that worker is running, so return quietly.
+     */
+    private ItemResult fail(ClaimedWorkItem item, String error, long fence) {
+        try {
+            client.failWorkItem(item.id(), error, fence == 0L ? null : fence);
+            return ItemResult.FAILED;
+        } catch (JamjetHttpException e) {
+            if (e.isConflict()) {
+                LOG.log(Level.INFO, () -> "failure rejected (409); lease lost for item " + item.id());
+                return ItemResult.LOST_LEASE;
+            }
+            // Anything else: we could not settle either, so the answer is the same —
+            // leave the item for lease expiry rather than pretending it failed cleanly.
+            // The two arms differ only in log level; both mean "the reclaimer has it".
+            LOG.log(Level.WARNING, () -> "could not report failure for item " + item.id() + ": " + e.getMessage());
+            return ItemResult.LOST_LEASE;
+        }
+    }
+
     /** Settle the item, threading the lease fence; a 409 is a lost-lease no-op. */
     private ItemResult complete(ClaimedWorkItem item, Map<String, Object> output, long durationMs, long fence) {
         // The dispatcher return ({"messages": [...]}) is BOTH the node output and the
@@ -251,7 +278,10 @@ public final class JavaToolWorker implements AutoCloseable {
                     item.id(), item.executionId(), item.nodeId(),
                     output, output, durationMs, genAiModel, finishReason,
                     // Echo the claim's fence so the engine fences this completion.
-                    fence == 0L ? null : fence);
+                    fence == 0L ? null : fence,
+                    // Echo the claim's key so the engine records the effect against it
+                    // and a re-run replays instead of firing the tool a second time.
+                    item.idempotencyKey());
             LOG.log(Level.DEBUG, () -> "completed item " + item.id() + " in " + durationMs + "ms");
             return ItemResult.COMPLETED;
         } catch (JamjetHttpException e) {
@@ -264,8 +294,7 @@ public final class JavaToolWorker implements AutoCloseable {
             }
             // Any other completion error keeps the fail behavior (mirror Python re-raise).
             LOG.log(Level.WARNING, () -> "completion failed for item " + item.id() + ": " + e.getMessage());
-            client.failWorkItem(item.id(), "complete failed: " + e.getMessage());
-            return ItemResult.FAILED;
+            return fail(item, "complete failed: " + e.getMessage(), fence);
         }
     }
 
