@@ -220,4 +220,22 @@ class JamjetEngineClientTest {
         assertThat(ex.isConflict()).isTrue();
         assertThat(ex.body()).contains("stale");
     }
+
+    @Test
+    void thePreIdempotencyKeyConstructorStillCompiles() {
+        // A record's canonical constructor is public API. Adding `idempotencyKey` as a
+        // component would have widened it and broken every caller that builds one
+        // directly — accessors resolving is not the same as the constructor resolving.
+        //
+        // This call IS the compatibility promise: delete the 7-arg overload and this
+        // test stops compiling.
+        ClaimedWorkItem legacy = new ClaimedWorkItem(
+                "wi_1", "ex_1", "n1", "java_tool", Map.of(), 1, 5L);
+
+        assertThat(legacy.idempotencyKey())
+                .as("an item built the old way has no key, and must not invent one")
+                .isNull();
+        assertThat(legacy.leaseFence()).isEqualTo(5L);
+    }
+
 }

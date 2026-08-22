@@ -30,4 +30,22 @@ public record ClaimedWorkItem(
         int attempt,
         Long leaseFence,
         String idempotencyKey
-) {}
+) {
+    /**
+     * The pre-{@code idempotencyKey} constructor, kept so adding the component stays
+     * source- and binary-compatible.
+     *
+     * <p>A record's canonical constructor is public API: widening it would break any
+     * caller that builds a {@code ClaimedWorkItem} directly, even though every accessor
+     * still resolves.
+     */
+    public ClaimedWorkItem(String id,
+                           String executionId,
+                           String nodeId,
+                           String queueType,
+                           Map<String, Object> payload,
+                           int attempt,
+                           Long leaseFence) {
+        this(id, executionId, nodeId, queueType, payload, attempt, leaseFence, null);
+    }
+}
