@@ -170,6 +170,28 @@ public final class JamjetEngineClient implements AutoCloseable {
                                  String genAiModel,
                                  String finishReason,
                                  Long leaseFence) {
+        completeWorkItem(itemId, executionId, nodeId, output, statePatch, durationMs,
+                genAiModel, finishReason, leaseFence, null);
+    }
+
+    /**
+     * As {@link #completeWorkItem(String, String, String, Object, Map, long, String, String, Long)},
+     * additionally echoing the claim's {@code idempotency_key}.
+     *
+     * <p>The engine records the result against that key, so a re-run replays it instead
+     * of firing the tool again. Omitting it records no effect at all and every replay
+     * re-fires — the behaviour before engine PR #128.
+     */
+    public void completeWorkItem(String itemId,
+                                 String executionId,
+                                 String nodeId,
+                                 Object output,
+                                 Map<String, Object> statePatch,
+                                 long durationMs,
+                                 String genAiModel,
+                                 String finishReason,
+                                 Long leaseFence,
+                                 String idempotencyKey) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("output", output);
         body.put("state_patch", statePatch == null ? Map.of() : statePatch);
@@ -189,12 +211,47 @@ public final class JamjetEngineClient implements AutoCloseable {
         if (leaseFence != null) {
             body.put("lease_fence", leaseFence);
         }
+        // Sent whenever present, not whenever non-blank: the worker echoes what the
+        // claim handed it, and the engine rejects a malformed key (HTTP 400). Dropping
+        // it here would turn a bad key into "no key", which fails silently.
+        if (idempotencyKey != null) {
+            body.put("idempotency_key", idempotencyKey);
+        }
         execute(buildPost("/work-items/" + itemId + "/complete", body));
     }
 
-    /** {@code POST /work-items/{id}/fail}. Body {@code {error}}. */
+    /**
+     * {@code POST /work-items/{id}/fail} without a fence — the legacy unfenced path.
+     *
+     * @deprecated the engine settles the item but emits no {@code NodeFailed}, so the
+     *     scheduler fold keeps the node scheduled and the execution never reaches a
+     *     terminal state. Use {@link #failWorkItem(String, String, Long)} with the
+     *     claim's fence to get retry semantics.
+     */
+    @Deprecated
     public void failWorkItem(String itemId, String error) {
-        execute(buildPost("/work-items/" + itemId + "/fail", Map.of("error", error)));
+        failWorkItem(itemId, error, null);
+    }
+
+    /**
+     * {@code POST /work-items/{id}/fail}. Body {@code {error, lease_fence?}}.
+     *
+     * <p>With the fence the engine emits {@code NodeFailed} (or {@code RetryScheduled})
+     * so the node is rescheduled or dead-lettered. Without it the item is settled but
+     * the fold keeps the node scheduled and the workflow is stranded — every Java tool
+     * failure did this before engine PR #118.
+     *
+     * <p>A stale fence yields HTTP 409, surfaced as a {@link JamjetHttpException} with
+     * {@link JamjetHttpException#isConflict()} true: the lease was reclaimed and another
+     * worker owns the item, so the caller must treat it as a no-op rather than an error.
+     */
+    public void failWorkItem(String itemId, String error, Long leaseFence) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("error", error);
+        if (leaseFence != null) {
+            body.put("lease_fence", leaseFence);
+        }
+        execute(buildPost("/work-items/" + itemId + "/fail", body));
     }
 
     /**

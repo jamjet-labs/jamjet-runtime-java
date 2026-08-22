@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.absent;
 import static com.github.tomakehurst.wiremock.client.WireMock.containing;
 import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
 import static com.github.tomakehurst.wiremock.client.WireMock.matchingJsonPath;
@@ -97,6 +98,11 @@ class JavaToolWorkerTest {
     /** Serialize a {@code {claimed, work_item}} claim response with the given payload + fence. */
     private static String claimBody(String dispatchClass, String dispatchMethod,
                                     Map<String, Object> input, long fence) {
+        return claimBody(dispatchClass, dispatchMethod, input, fence, null);
+    }
+
+    private static String claimBody(String dispatchClass, String dispatchMethod,
+                                    Map<String, Object> input, long fence, String idempotencyKey) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("class", dispatchClass);
         payload.put("method", dispatchMethod);
@@ -110,6 +116,9 @@ class JavaToolWorkerTest {
         wi.put("payload", payload);
         wi.put("attempt", 1);
         wi.put("lease_fence", fence);
+        if (idempotencyKey != null) {
+            wi.put("idempotency_key", idempotencyKey);
+        }
 
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("claimed", true);
@@ -347,4 +356,96 @@ class JavaToolWorkerTest {
             assertThat(worker.runOnce()).isEqualTo(JavaToolWorker.ItemResult.EMPTY);
         }
     }
+
+    @Test
+    @Timeout(15)
+    void aFailureReportsTheFenceSoTheNodeIsRescheduled() {
+        // Without the fence the engine settles the item but emits no NodeFailed, so the
+        // scheduler fold keeps the node `scheduled` and the execution never terminates.
+        // Every Java tool failure stranded its workflow this way.
+        Map<String, Object> input = Map.of("last_model_tool_calls", List.of());
+        wm.stubFor(post(urlEqualTo("/work-items/claim"))
+                .willReturn(okJson(claimBody("java.lang.Runtime", "exec", input, 7))));
+        wm.stubFor(post(urlEqualTo("/work-items/wi_1/fail")).willReturn(ok()));
+
+        try (var client = new JamjetEngineClient(wm.baseUrl());
+             var worker = new JavaToolWorker(client, "w1",
+                     ToolRegistry.of(new TestTools.WebSearchTool()),
+                     Duration.ofSeconds(2), Duration.ofMillis(10))) {
+            assertThat(worker.runOnce()).isEqualTo(JavaToolWorker.ItemResult.FAILED);
+        }
+
+        wm.verify(postRequestedFor(urlEqualTo("/work-items/wi_1/fail"))
+                .withRequestBody(matchingJsonPath("$.lease_fence", equalTo("7"))));
+    }
+
+    @Test
+    @Timeout(15)
+    void aConflictOnFailDoesNotEscapeAndKillTheWorker() {
+        // 409 means the lease was reclaimed and a NEW worker owns the item. Reporting
+        // our failure would kill work that worker is running, so it must be a quiet
+        // no-op rather than an exception out of runOnce().
+        //
+        // This pins the escape, not the 409/other distinction: a failure we could not
+        // report is LOST_LEASE either way, because in both cases we did not settle the
+        // item and the reclaimer must have it. Only the log level differs.
+        Map<String, Object> input = Map.of("last_model_tool_calls", List.of());
+        wm.stubFor(post(urlEqualTo("/work-items/claim"))
+                .willReturn(okJson(claimBody("java.lang.Runtime", "exec", input, 7))));
+        wm.stubFor(post(urlEqualTo("/work-items/wi_1/fail"))
+                .willReturn(aResponse().withStatus(409).withBody("{\"reason\":\"stale or invalid lease fence\"}")));
+
+        try (var client = new JamjetEngineClient(wm.baseUrl());
+             var worker = new JavaToolWorker(client, "w1",
+                     ToolRegistry.of(new TestTools.WebSearchTool()),
+                     Duration.ofSeconds(2), Duration.ofMillis(10))) {
+            assertThat(worker.runOnce()).isEqualTo(JavaToolWorker.ItemResult.LOST_LEASE);
+        }
+    }
+
+    @Test
+    @Timeout(15)
+    void theClaimsIdempotencyKeyIsEchoedOnComplete() {
+        // The engine records the result against this key, so a re-run replays it instead
+        // of firing the tool a second time. Omit it and nothing lands in tool_effects.
+        Map<String, Object> input = Map.of(
+                "last_model_tool_calls", List.of(toolCall("tc1", "web_search", Map.of("query", "x"))));
+        wm.stubFor(post(urlEqualTo("/work-items/claim")).willReturn(okJson(
+                claimBody(ToolDispatcher.DISPATCH_CLASS, ToolDispatcher.DISPATCH_METHOD, input, 9, "key-abc"))));
+        wm.stubFor(post(urlEqualTo("/work-items/wi_1/complete")).willReturn(ok()));
+        wm.stubFor(post(urlEqualTo("/work-items/wi_1/heartbeat")).willReturn(ok()));
+
+        try (var client = new JamjetEngineClient(wm.baseUrl());
+             var worker = new JavaToolWorker(client, "w1",
+                     ToolRegistry.of(new TestTools.WebSearchTool()),
+                     Duration.ofSeconds(2), Duration.ofMillis(10))) {
+            assertThat(worker.runOnce()).isEqualTo(JavaToolWorker.ItemResult.COMPLETED);
+        }
+
+        wm.verify(postRequestedFor(urlEqualTo("/work-items/wi_1/complete"))
+                .withRequestBody(matchingJsonPath("$.idempotency_key", equalTo("key-abc"))));
+    }
+
+    @Test
+    @Timeout(15)
+    void aClaimWithoutAKeyStillCompletes() {
+        // Against an engine that predates the field the key is absent. That must record
+        // no effect, not break the completion.
+        Map<String, Object> input = Map.of(
+                "last_model_tool_calls", List.of(toolCall("tc1", "web_search", Map.of("query", "x"))));
+        wm.stubFor(post(urlEqualTo("/work-items/claim")).willReturn(okJson(validClaim(input, 9))));
+        wm.stubFor(post(urlEqualTo("/work-items/wi_1/complete")).willReturn(ok()));
+        wm.stubFor(post(urlEqualTo("/work-items/wi_1/heartbeat")).willReturn(ok()));
+
+        try (var client = new JamjetEngineClient(wm.baseUrl());
+             var worker = new JavaToolWorker(client, "w1",
+                     ToolRegistry.of(new TestTools.WebSearchTool()),
+                     Duration.ofSeconds(2), Duration.ofMillis(10))) {
+            assertThat(worker.runOnce()).isEqualTo(JavaToolWorker.ItemResult.COMPLETED);
+        }
+
+        wm.verify(postRequestedFor(urlEqualTo("/work-items/wi_1/complete"))
+                .withRequestBody(matchingJsonPath("$.idempotency_key", absent())));
+    }
+
 }
