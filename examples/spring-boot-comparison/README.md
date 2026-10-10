@@ -13,7 +13,7 @@ Side-by-side comparison of building a durable Spring Boot agent the old way (RES
 | **Crash recovery** | Sidecar holds state (single point of failure) | In-process (survives partial failures) |
 | **Failure mode** | Sidecar down → silent durability loss | Runtime embedded → always available |
 | **Code changes** | REST calls in each step | `DurabilityContext.replayOrExecute` in each step |
-| **Dependency** | `jamjet-spring-boot-autoconfigure:0.1.2` (Maven Central) | `jamjet-runtime-spring-boot-starter:0.4.0` (Maven Central) |
+| **Dependency** | `jamjet-spring-boot-autoconfigure:0.1.0` (Maven Central) | `jamjet-runtime-spring-boot-starter:0.4.0` (Maven Central) |
 
 ## How to Run: New Way (2 steps)
 
@@ -49,7 +49,7 @@ cd examples/spring-boot-comparison/old-way
 mvn spring-boot:run
 ```
 
-Note: old-way is a **reference project only**. It requires `dev.jamjet:jamjet-spring-boot-autoconfigure:0.1.2` from Maven Central. The sidecar REST endpoints (`/checkpoint/*`) shown in `OldWayAgent.java` are illustrative — they match the external runtime API pattern, not a public spec.
+Note: old-way is a **reference project only**. It requires `dev.jamjet:jamjet-spring-boot-autoconfigure:0.1.0` from Maven Central. The sidecar REST endpoints (`/checkpoint/*`) shown in `OldWayAgent.java` are illustrative — they match the external runtime API pattern, not a public spec.
 
 ## What Changed
 
