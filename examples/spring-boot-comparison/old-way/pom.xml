@@ -25,7 +25,7 @@
 
     <!--
         NOTE: This is a REFERENCE project. It does NOT compile out-of-the-box because it
-        depends on dev.jamjet:jamjet-spring-boot-autoconfigure:0.1.2 from Maven Central,
+        depends on dev.jamjet:jamjet-spring-boot-autoconfigure:0.1.0 from Maven Central,
         which requires a running Rust sidecar to actually function.
 
         To run:
@@ -38,14 +38,14 @@
 
     <dependencies>
         <!--
-            Old way: the published Maven Central starter (0.1.2) that proxies everything
+            Old way: the published Maven Central starter (0.1.0) that proxies everything
             through a REST sidecar. Compare with new-way/pom.xml which uses the embedded
-            starter (0.1.0-SNAPSHOT) that bundles the runtime directly.
+            starter (jamjet-runtime-spring-boot-starter) that bundles the runtime directly.
         -->
         <dependency>
             <groupId>dev.jamjet</groupId>
             <artifactId>jamjet-spring-boot-autoconfigure</artifactId>
-            <version>0.1.2</version>
+            <version>0.1.0</version>
         </dependency>
 
         <dependency>

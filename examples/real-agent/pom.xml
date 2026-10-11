@@ -22,13 +22,13 @@
         <dependency>
             <groupId>dev.jamjet</groupId>
             <artifactId>jamjet-runtime-core</artifactId>
-            <version>0.1.0-SNAPSHOT</version>
+            <version>0.4.0</version>
         </dependency>
 
         <dependency>
             <groupId>dev.jamjet</groupId>
             <artifactId>jamjet-runtime-instrument</artifactId>
-            <version>0.1.0-SNAPSHOT</version>
+            <version>0.4.0</version>
         </dependency>
 
         <dependency>

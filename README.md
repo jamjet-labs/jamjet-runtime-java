@@ -1,6 +1,6 @@
 # JamJet Java Runtime
 
-Pure-Java agent runtime. Durable execution, crash recovery, MCP native. No sidecar.
+Pure-Java agent runtime: checkpointed agent steps, an embeddable workflow engine, and MCP client and server adapters. No sidecar.
 
 ---
 
@@ -27,35 +27,25 @@ public class ResearchAgent {
 }
 ```
 
-Kill the process after `search` completes. Restart. `analyze` runs. `search` is replayed from
-checkpoint — no API call, no charge, instant. Zero code changes.
+`replayOrExecute` runs the step the first time and returns the recorded result when the same
+checkpoint id is seen again in a replaying `DurabilityContext`. The context keeps results in
+memory, so surviving a restart means saving them yourself and loading them into a fresh context
+with replay mode on. [`examples/crash-recovery`](examples/crash-recovery/) does this with a
+checkpoint file.
 
 ---
 
 ## Why JamJet
 
-- **Crash recovery** — kill your process, restart, resume from last checkpoint. Works with
-  any storage backend (H2, Postgres, SQLite).
+- **Checkpointed steps**: completed steps are returned from the checkpoint cache on replay
+  instead of calling the API or LLM again. The cache is in memory; the crash-recovery example
+  shows persisting it to a file.
 - **Zero overhead** — no REST hops, no sidecar. Runtime lives inside your JVM, shares your
   DataSource, calls your methods directly.
-- **Virtual threads** — 1M concurrent agents on standard blocking code. No `CompletableFuture`
-  chains, no reactive operators.
+- **Virtual threads**: the worker pool runs work on virtual threads (`Executors.newVirtualThreadPerTaskExecutor()`),
+  so tool and model calls can be plain blocking code.
 - **Standard Java** — works with Spring AI, LangChain4j, Google ADK, or any Java LLM library.
   JamJet adds durability; you keep your LLM calls.
-
----
-
-## How it compares
-
-| Feature                    | JamJet              | Spring AI   | LangChain4j | Koog        | Google ADK  |
-|----------------------------|---------------------|-------------|-------------|-------------|-------------|
-| Durable execution          | Yes (event sourced) | No          | No          | No          | No          |
-| Crash recovery             | Checkpoint-level    | No          | No          | No          | No          |
-| Virtual threads            | Native              | No          | No          | Coroutines  | No          |
-| Plugin hot-reload          | ClassLoader isolated| No          | No          | No          | No          |
-| MCP native                 | Client + Server     | Client only | Client only | No          | Client only |
-| Bytecode instrumentation   | @DurableAgent       | No          | No          | No          | No          |
-| Sidecar required           | No                  | N/A         | N/A         | N/A         | N/A         |
 
 ---
 
@@ -72,25 +62,28 @@ checkpoint — no API call, no charge, instant. Zero code changes.
 
 ## Quick Start
 
-Add the dependency:
+Add the dependency (all modules are on Maven Central at 0.4.0):
 
 ```xml
 <dependency>
     <groupId>dev.jamjet</groupId>
     <artifactId>jamjet-runtime-instrument</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>0.4.0</version>
 </dependency>
 ```
 
-For Spring Boot auto-configuration, use `jamjet-spring-boot-starter` instead:
+For Spring Boot auto-configuration, use `jamjet-runtime-spring-boot-starter` instead:
 
 ```xml
 <dependency>
     <groupId>dev.jamjet</groupId>
-    <artifactId>jamjet-spring-boot-starter</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <artifactId>jamjet-runtime-spring-boot-starter</artifactId>
+    <version>0.4.0</version>
 </dependency>
 ```
+
+The starter's only supported storage value is `jamjet.storage=in-memory` (the default). Any other
+value logs a warning and falls back to in-memory, so state does not survive a restart.
 
 Then:
 
@@ -98,7 +91,7 @@ Then:
 2. Annotate each step with `@Checkpoint`
 3. Wrap the step body with `DurabilityContext.current().replayOrExecute(id, () -> ...)`
 
-That is the entire integration. No schema changes, no new infrastructure.
+Persisting checkpoints across restarts is up to you, see the crash-recovery example.
 
 ---
 
@@ -106,12 +99,14 @@ That is the entire integration. No schema changes, no new infrastructure.
 
 | Module | Description |
 |--------|-------------|
-| `jamjet-runtime-core` | Framework-agnostic runtime kernel: IR, event store, scheduler, workers, state backends |
+| `jamjet-runtime-core` | Framework-agnostic runtime kernel: IR, event store, scheduler, workers, state backends (`InMemoryStateBackend`; `JdbcStateBackend` for H2 and PostgreSQL, not yet wired into the starter or server) |
 | `jamjet-runtime-protocols` | MCP client and server adapters, ProtocolAdapter SPI |
 | `jamjet-runtime-instrument` | ByteBuddy Java agent, `@DurableAgent`, `@Checkpoint`, `DurabilityContext` |
 | `jamjet-runtime-plugins` | ClassLoader-isolated plugin system with ServiceLoader and hot-reload |
-| `jamjet-runtime-server` | Standalone Javalin REST server — same API surface as the Rust runtime |
-| `jamjet-spring-boot-starter` | Spring Boot auto-configuration: embeds the runtime as Spring beans |
+| `jamjet-runtime-server` | Standalone Javalin REST server, in-memory storage only |
+| `jamjet-runtime-spring-boot-starter` | Spring Boot auto-configuration: embeds the runtime as Spring beans with an in-memory state backend and a REST controller |
+| `jamjet-agent` | Governed, durable `Agent` authoring that runs on the Rust engine |
+| `jamjet-agent-spring-boot-starter` | Spring Boot starter for `jamjet-agent` (see its README) |
 | `jamjet-cloud-sdk` | Drop-in observability for Spring AI / LangChain4j (mirrors Python `jamjet.cloud`) |
 | `jamjet-cloud-spring-boot-starter` | Spring Boot auto-config for the Cloud SDK |
 
@@ -127,7 +122,7 @@ Drop-in observability for Spring AI and LangChain4j agents. Mirrors the Python `
 <dependency>
   <groupId>dev.jamjet</groupId>
   <artifactId>jamjet-cloud-spring-boot-starter</artifactId>
-  <version>0.2.0</version>
+  <version>0.4.0</version>
 </dependency>
 ```
 
@@ -147,7 +142,7 @@ That's it. Every Spring AI `ChatClient` / `ChatModel` call and every LangChain4j
 <dependency>
   <groupId>dev.jamjet</groupId>
   <artifactId>jamjet-cloud-sdk</artifactId>
-  <version>0.2.0</version>
+  <version>0.4.0</version>
 </dependency>
 ```
 
