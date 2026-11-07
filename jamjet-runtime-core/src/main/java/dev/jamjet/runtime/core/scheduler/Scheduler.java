@@ -112,6 +112,10 @@ public class Scheduler implements Runnable {
 
         WorkflowIr ir = mapper.treeToValue(def.ir(), WorkflowIr.class);
         List<Event> events = backend.getEvents(execution.executionId());
+        if (RunnableNodeDetector.hasUnreadableEvent(events)) {
+            stall(execution, events);
+            return;
+        }
         var runnable = RunnableNodeDetector.findRunnable(ir, events);
 
         if (runnable.isEmpty()) {
@@ -163,6 +167,24 @@ public class Scheduler implements Runnable {
             backend.enqueueWorkItem(item);
             dispatched++;
         }
+    }
+
+    /**
+     * The log holds an event kind this build cannot read, so it cannot tell what the run
+     * may do next. Records {@link EventKind.RunStalled} once and leaves the run as it is,
+     * as the Rust scheduler does, until a build that reads the whole log takes over.
+     */
+    private void stall(WorkflowExecution execution, List<Event> events) throws StateBackendException {
+        for (Event event : events) {
+            if (event.kind() instanceof EventKind.RunStalled) {
+                return;
+            }
+        }
+        log.warn("Execution {} holds an event kind this build cannot read; not advancing it",
+                execution.executionId());
+        long seq = backend.latestSequence(execution.executionId()) + 1;
+        backend.appendEvent(Event.create(execution.executionId(), seq,
+                new EventKind.RunStalled("event log holds an event kind this build cannot read")));
     }
 
     private long countActiveNodes(List<Event> events) {

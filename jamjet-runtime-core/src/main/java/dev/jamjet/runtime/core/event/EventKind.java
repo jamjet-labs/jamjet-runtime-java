@@ -1,5 +1,6 @@
 package dev.jamjet.runtime.core.event;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -7,8 +8,18 @@ import dev.jamjet.runtime.core.QueueType;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 
-@JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "type")
+/**
+ * Every event kind in a JamJet event log, mirroring {@code EventKind} in the Rust runtime
+ * ({@code runtime/state/src/event.rs}): same {@code type} tags, same snake_case fields.
+ *
+ * <p>A {@code type} this build does not know reads as {@link Unknown} instead of failing the
+ * whole log, as Rust's {@code #[serde(other)] Unknown} does. It is not ignored where it could
+ * matter: it may be a revocation or a denial, so the scheduler does not advance a run whose
+ * log holds one (see {@link RunStalled}).</p>
+ */
+@JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "type", defaultImpl = EventKind.Unknown.class)
 @JsonSubTypes({
         // Workflow lifecycle
         @JsonSubTypes.Type(value = EventKind.WorkflowStarted.class, name = "workflow_started"),
@@ -20,6 +31,7 @@ import java.util.List;
         @JsonSubTypes.Type(value = EventKind.NodeStarted.class, name = "node_started"),
         @JsonSubTypes.Type(value = EventKind.NodeCompleted.class, name = "node_completed"),
         @JsonSubTypes.Type(value = EventKind.NodeFailed.class, name = "node_failed"),
+        @JsonSubTypes.Type(value = EventKind.NodeParked.class, name = "node_parked"),
         @JsonSubTypes.Type(value = EventKind.NodeSkipped.class, name = "node_skipped"),
         @JsonSubTypes.Type(value = EventKind.NodeCancelled.class, name = "node_cancelled"),
         // Retry
@@ -42,10 +54,16 @@ import java.util.List;
         @JsonSubTypes.Type(value = EventKind.CostBudgetExceeded.class, name = "cost_budget_exceeded"),
         @JsonSubTypes.Type(value = EventKind.AutonomyLimitReached.class, name = "autonomy_limit_reached"),
         @JsonSubTypes.Type(value = EventKind.CircuitBreakerTripped.class, name = "circuit_breaker_tripped"),
+        @JsonSubTypes.Type(value = EventKind.AgentStepAdmitted.class, name = "agent_step_admitted"),
         @JsonSubTypes.Type(value = EventKind.EscalationRequired.class, name = "escalation_required"),
         // Policy
         @JsonSubTypes.Type(value = EventKind.PolicyViolation.class, name = "policy_violation"),
         @JsonSubTypes.Type(value = EventKind.ToolApprovalRequired.class, name = "tool_approval_required"),
+        @JsonSubTypes.Type(value = EventKind.ApprovalExpired.class, name = "approval_expired"),
+        @JsonSubTypes.Type(value = EventKind.ApprovalEscalated.class, name = "approval_escalated"),
+        // Audit / run health
+        @JsonSubTypes.Type(value = EventKind.AuditSealFailed.class, name = "audit_seal_failed"),
+        @JsonSubTypes.Type(value = EventKind.RunStalled.class, name = "run_stalled"),
         // Strategy
         @JsonSubTypes.Type(value = EventKind.StrategyStarted.class, name = "strategy_started"),
         @JsonSubTypes.Type(value = EventKind.PlanGenerated.class, name = "plan_generated"),
@@ -65,17 +83,30 @@ import java.util.List;
         @JsonSubTypes.Type(value = EventKind.AgentToolTurn.class, name = "agent_tool_turn"),
         @JsonSubTypes.Type(value = EventKind.AgentToolCompleted.class, name = "agent_tool_completed"),
         @JsonSubTypes.Type(value = EventKind.AgentToolTerminated.class, name = "agent_tool_terminated"),
-        @JsonSubTypes.Type(value = EventKind.AgentToolFailed.class, name = "agent_tool_failed")
+        @JsonSubTypes.Type(value = EventKind.AgentToolFailed.class, name = "agent_tool_failed"),
+        // Continue-as-new
+        @JsonSubTypes.Type(value = EventKind.SegmentBoundary.class, name = "segment_boundary"),
+        // A kind this build does not know
+        @JsonSubTypes.Type(value = EventKind.Unknown.class, name = "unknown")
 })
 public sealed interface EventKind {
 
     // ── Workflow lifecycle ──────────────────────────────────────────
 
+    /**
+     * @param initiatedBy principal that started the run ({@code "token:<id>"}), used for
+     *                    separation of duties on approvals; {@code null} in dev mode and on old logs
+     */
     record WorkflowStarted(
             String workflowId,
             String workflowVersion,
-            JsonNode initialInput
-    ) implements EventKind {}
+            JsonNode initialInput,
+            String initiatedBy
+    ) implements EventKind {
+        public WorkflowStarted(String workflowId, String workflowVersion, JsonNode initialInput) {
+            this(workflowId, workflowVersion, initialInput, null);
+        }
+    }
 
     record WorkflowCompleted(
             JsonNode finalState
@@ -113,14 +144,32 @@ public sealed interface EventKind {
             Long outputTokens,
             String finishReason,
             Double costUsd,
-            ProvenanceMetadata provenance
-    ) implements EventKind {}
+            ProvenanceMetadata provenance,
+            String idempotencyKey
+    ) implements EventKind {
+        public NodeCompleted(String nodeId, JsonNode output, JsonNode statePatch, long durationMs,
+                             String genAiSystem, String genAiModel, Long inputTokens, Long outputTokens,
+                             String finishReason, Double costUsd, ProvenanceMetadata provenance) {
+            this(nodeId, output, statePatch, durationMs, genAiSystem, genAiModel, inputTokens, outputTokens,
+                    finishReason, costUsd, provenance, null);
+        }
+    }
 
     record NodeFailed(
             String nodeId,
             String error,
             int attempt,
             boolean retryable
+    ) implements EventKind {}
+
+    /**
+     * A work item parked on a provider rate limit (429): reset to pending until
+     * {@code retryAfter} (RFC 3339 text). Observability only; the node stays scheduled.
+     */
+    record NodeParked(
+            String nodeId,
+            int attempt,
+            String retryAfter
     ) implements EventKind {}
 
     record NodeSkipped(
@@ -148,13 +197,29 @@ public sealed interface EventKind {
             JsonNode stateForReview
     ) implements EventKind {}
 
+    /**
+     * @param principal       authenticated identity behind the decision ({@code "token:<id>"});
+     *                        {@code null} in dev mode and on old logs
+     * @param approvedDigest  the action digest this approval authorises; {@code null} on
+     *                        rejections and on old logs, and a {@code null} never authorises a
+     *                        digest-bound node
+     * @param requestSequence sequence of the {@code ToolApprovalRequired} this decision answers
+     */
     record ApprovalReceived(
             String nodeId,
             String userId,
             ApprovalDecision decision,
             String comment,
-            JsonNode statePatch
-    ) implements EventKind {}
+            JsonNode statePatch,
+            String principal,
+            String approvedDigest,
+            Long requestSequence
+    ) implements EventKind {
+        public ApprovalReceived(String nodeId, String userId, ApprovalDecision decision, String comment,
+                                JsonNode statePatch) {
+            this(nodeId, userId, decision, comment, statePatch, null, null, null);
+        }
+    }
 
     // ── Timers ──────────────────────────────────────────────────────
 
@@ -233,6 +298,23 @@ public sealed interface EventKind {
             int threshold
     ) implements EventKind {}
 
+    /**
+     * A node acting for {@code agents} was admitted to fire, charging one step to each and
+     * {@code toolCalls} tool calls. {@code approvalSequence} is set when a human approval
+     * released a step past a limit.
+     */
+    record AgentStepAdmitted(
+            String nodeId,
+            UUID workItemId,
+            List<String> agents,
+            int toolCalls,
+            Long approvalSequence
+    ) implements EventKind {
+        public AgentStepAdmitted {
+            agents = agents == null ? List.of() : List.copyOf(agents);
+        }
+    }
+
     record EscalationRequired(
             String nodeId,
             String agentRef,
@@ -254,6 +336,49 @@ public sealed interface EventKind {
             String toolName,
             String approver,
             JsonNode context
+    ) implements EventKind {}
+
+    /**
+     * The approval request at {@code requestSequence} reached its deadline undecided: a
+     * rejection by {@code principal} (always {@code "system:deadline"}).
+     */
+    record ApprovalExpired(
+            String nodeId,
+            long requestSequence,
+            Instant expiresAt,
+            String principal
+    ) implements EventKind {}
+
+    /**
+     * The approval request at {@code requestSequence} is still pending at its escalation
+     * time. Recorded once per request for notifiers; changes no approval state.
+     */
+    record ApprovalEscalated(
+            String nodeId,
+            long requestSequence,
+            Instant escalateAt,
+            Instant expiresAt
+    ) implements EventKind {}
+
+    // ── Audit / run health ──────────────────────────────────────────
+
+    /**
+     * The event {@code eventId} could not be sealed into the signed audit chain. The event
+     * itself is durable; this marks the gap. Changes no state.
+     */
+    record AuditSealFailed(
+            UUID eventId,
+            long sequence,
+            String eventType,
+            String error
+    ) implements EventKind {}
+
+    /**
+     * The scheduler stopped advancing this run because its log holds an event kind this
+     * build cannot read ({@link Unknown}). Recorded once.
+     */
+    record RunStalled(
+            String reason
     ) implements EventKind {}
 
     // ── Strategy ────────────────────────────────────────────────────
@@ -395,4 +520,25 @@ public sealed interface EventKind {
             String message,
             boolean retryable
     ) implements EventKind {}
+
+    // ── Continue-as-new ─────────────────────────────────────────────
+
+    /**
+     * Written to the old execution when a continue-as-new rollover creates segment
+     * {@code segmentNumber} as {@code nextExecutionId}. Audit only.
+     */
+    record SegmentBoundary(
+            int segmentNumber,
+            String nextExecutionId
+    ) implements EventKind {}
+
+    // ── Unknown ─────────────────────────────────────────────────────
+
+    /**
+     * An event kind this build does not know, written by a later release. Its fields are
+     * dropped; writing it back produces {@code {"type":"unknown"}}. Treat it as possibly a
+     * denial or revocation: never as permission to proceed.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record Unknown() implements EventKind {}
 }

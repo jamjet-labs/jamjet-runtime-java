@@ -140,4 +140,21 @@ class SchedulerTest {
                         && ns.nodeId().equals("b"));
         assertTrue(hasBScheduled, "Should emit NodeScheduled for 'b' after 'a' completes");
     }
+
+    @Test
+    void aRunWithAnUnreadableEventIsNotAdvanced() throws Exception {
+        var ir = simpleWorkflow();
+        registerWorkflow(ir);
+        ExecutionId execId = startExecution("simple", "1");
+        backend.appendEvent(Event.create(execId, 2, new EventKind.Unknown()));
+
+        scheduler.tick();
+        scheduler.tick();
+
+        assertTrue(backend.claimWorkItem("worker-1", List.of(QueueType.TOOL.getValue())).isEmpty(),
+                "no work item may be dispatched for a run whose log cannot be read");
+        List<Event> events = backend.getEvents(execId);
+        assertEquals(1, events.stream().filter(e -> e.kind() instanceof EventKind.RunStalled).count());
+        assertEquals(0, events.stream().filter(e -> e.kind() instanceof EventKind.NodeScheduled).count());
+    }
 }

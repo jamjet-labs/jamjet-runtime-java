@@ -19,11 +19,17 @@ public final class RunnableNodeDetector {
      * Finds all nodes that are ready to run: not yet scheduled/completed/terminally-failed,
      * and all predecessor nodes (edges pointing TO the node) are completed.
      *
+     * <p>Returns nothing when the log holds an {@link EventKind.Unknown}: an event this
+     * build cannot read may be a cancellation or a denial, so no node is runnable.</p>
+     *
      * @param ir     the workflow intermediate representation
      * @param events the event history for this execution
      * @return deterministically-ordered set of runnable node IDs
      */
     public static Set<String> findRunnable(WorkflowIr ir, List<Event> events) {
+        if (hasUnreadableEvent(events)) {
+            return new LinkedHashSet<>();
+        }
         var completed = new HashSet<String>();
         var scheduled = new HashSet<String>();
         var terminalFailed = new HashSet<String>();
@@ -78,5 +84,15 @@ public final class RunnableNodeDetector {
         }
 
         return runnable;
+    }
+
+    /** True when the log holds an event kind this build does not know. */
+    public static boolean hasUnreadableEvent(List<Event> events) {
+        for (Event event : events) {
+            if (event.kind() instanceof EventKind.Unknown) {
+                return true;
+            }
+        }
+        return false;
     }
 }
