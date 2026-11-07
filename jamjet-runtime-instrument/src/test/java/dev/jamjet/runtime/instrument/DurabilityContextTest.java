@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class DurabilityContextTest {
 
@@ -87,5 +88,41 @@ class DurabilityContextTest {
 
         DurabilityContext.clear();
         assertThat(DurabilityContext.current()).isNull();
+    }
+    @Test
+    void aRecordedFailureIsNotReadableAsAResult() {
+        DurabilityContext ctx = DurabilityContext.create();
+        ctx.recordFailure("pay", new IllegalStateException("declined"));
+
+        assertThat(ctx.getCheckpointIds()).containsExactly("pay");
+        assertThatThrownBy(() -> ctx.getRecordedResult("pay"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("recorded a failure");
+        assertThat(ctx.getRecord("pay").failed()).isTrue();
+        assertThat(ctx.getRecord("pay").failureType()).isEqualTo("java.lang.IllegalStateException");
+    }
+
+    @Test
+    void replayOrExecuteRethrowsARecordedFailure() {
+        DurabilityContext ctx = DurabilityContext.create();
+        ctx.restore(CheckpointRecord.failure("pay", "com.example.Declined", "card closed"));
+        ctx.setReplayMode(true);
+        AtomicInteger callCount = new AtomicInteger(0);
+
+        assertThatThrownBy(() -> ctx.replayOrExecute("pay", () -> {
+            callCount.incrementAndGet();
+            return "paid";
+        })).isInstanceOf(CheckpointReplayException.class)
+                .hasMessageContaining("com.example.Declined: card closed");
+        assertThat(callCount.get()).isEqualTo(0);
+    }
+
+    @Test
+    void aThrowingSupplierRecordsNothing() {
+        DurabilityContext ctx = DurabilityContext.create();
+        assertThatThrownBy(() -> ctx.replayOrExecute("pay", () -> {
+            throw new IllegalStateException("down");
+        })).hasMessage("down");
+        assertThat(ctx.getCheckpointIds()).isEmpty();
     }
 }

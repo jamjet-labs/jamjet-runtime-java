@@ -59,27 +59,28 @@ public class ResearchAgent {
 
 Add one dependency. Annotate your agent class. Annotate your steps. Done.
 
-The runtime lives inside your JVM. No REST hops. No Docker. No sidecar. If the process crashes
-after `search` completes, a restart replays `search` from the checkpoint store (an in-process
-H2 database by default) and continues from `analyze`.
+The runtime lives inside your JVM. No REST hops. No Docker. No sidecar. Checkpoints are kept in
+memory by the `DurabilityContext`. If you save them and load them into a fresh context after a
+crash (the crash-recovery example uses a file), the restart returns `search` from the saved
+checkpoint and continues from `analyze`.
 
 ---
 
 ## How It Works
 
-### Event Sourcing
+### Replay or Execute
 
-Every `replayOrExecute` call either executes the lambda and appends its return value to an
-append-only event log, or — if the execution ID already exists in the log — returns the stored
-value without executing the lambda.
+Every `replayOrExecute` call either executes the lambda and records its return value under the
+checkpoint ID, or, when the context is replaying and the ID is already recorded, returns the
+stored value without executing the lambda.
 
-This is the same algorithm used in the Rust JamJet runtime. The event log is the source of
-truth. Recovery is deterministic: replay the log in order, skip any step whose ID is already
-recorded, execute the rest.
+The records sit in an in-memory map inside the `DurabilityContext`. There is no event log and
+no database behind it, and nothing is written to disk for you. To survive a restart, save
+`getRecords()` and `restore` them into a fresh context with replay mode on. Recovery then runs
+the steps in order, returns the recorded ones and executes the rest.
 
-The default backend is H2 (embedded, zero-config). Swap in Postgres with a single configuration
-property. The schema is three tables: `agent_runs`, `checkpoint_events`, and `checkpoint_results`.
-It migrates automatically via Flyway.
+The Rust JamJet runtime is different: it writes every state change to an append-only event
+log. This context is a lighter mechanism and keeps no log.
 
 ```java
 // On first run: executes and records
@@ -95,8 +96,11 @@ The lambda is the unit of idempotency. The ID is the checkpoint name. Same name,
 
 `@DurableAgent` and `@Checkpoint` are pure marker annotations. At class load time, the JamJet
 Java agent (a standard `-javaagent` JVM flag) uses ByteBuddy to transform any class annotated
-with `@DurableAgent`. Each method annotated with `@Checkpoint` is wrapped: the method body is
-replaced with a `replayOrExecute` call using the method's checkpoint ID.
+with `@DurableAgent`. Each method annotated with `@Checkpoint` is wrapped with advice that records
+its outcome in the current `DurabilityContext`. The checkpoint ID combines the checkpoint name, a
+fingerprint of the arguments and the call's position among calls with the same arguments, so
+`charge("alice")` never replays `charge("bob")` and the second call in a loop replays the second
+result. A call that threw is recorded as a failure and replays by throwing again.
 
 This means you can choose your level of explicitness:
 
@@ -207,10 +211,10 @@ Recovery complete. Result: Final report: Analysis complete. Key finding: quantum
 ```
 
 `search` took 0ms the second time. The LLM call (or in this case, the simulated work) did not
-run. The checkpoint store returned the stored result immediately.
+run. The saved checkpoint was returned immediately.
 
-Kill your process mid-agent. Restart. It picks up where it left off. No special handling in
-your agent code.
+Kill your process mid-agent, restart, load the saved checkpoints, and it picks up where it left
+off. Saving and loading them is your code's job; the example does it with a file.
 
 ---
 
@@ -397,9 +401,8 @@ Or without Spring (instrument module only):
 </dependency>
 ```
 
-No additional infrastructure required. The default backend is an embedded H2 database. For
-Postgres, set `jamjet.datasource.url` to your JDBC URL — the starter picks it up automatically
-and runs Flyway migrations on startup.
+No additional infrastructure required. Checkpoints live in memory; persisting them across
+restarts is up to you, as in the crash-recovery example.
 
 For a complete working example with real OpenAI API calls, start with
 [`examples/real-agent`](../../examples/real-agent/). It runs with one environment variable
