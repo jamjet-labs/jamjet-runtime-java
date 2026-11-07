@@ -31,6 +31,9 @@ public class JamjetAgentProperties {
     /** The durable {@code java_tool} worker settings. */
     private Worker worker = new Worker();
 
+    /** The optional HTTP endpoint for deciding approvals. */
+    private Approvals approvals = new Approvals();
+
     public String getRuntimeUrl() {
         return runtimeUrl;
     }
@@ -61,6 +64,58 @@ public class JamjetAgentProperties {
 
     public void setWorker(Worker worker) {
         this.worker = worker;
+    }
+
+    public Approvals getApprovals() {
+        return approvals;
+    }
+
+    public void setApprovals(Approvals approvals) {
+        this.approvals = approvals;
+    }
+
+    /** Settings for the approval endpoint ({@code jamjet.agent.approvals.endpoint.*}). */
+    public static class Approvals {
+
+        private Endpoint endpoint = new Endpoint();
+
+        public Endpoint getEndpoint() {
+            return endpoint;
+        }
+
+        public void setEndpoint(Endpoint endpoint) {
+            this.endpoint = endpoint;
+        }
+
+        /**
+         * {@code GET {path}/executions/{id}/approvals} and
+         * {@code POST {path}/executions/{id}/approve}, forwarded to the engine with the
+         * caller's own bearer token. Off unless enabled.
+         */
+        public static class Endpoint {
+
+            /** Expose the endpoint (servlet web apps only). Off by default. */
+            private boolean enabled = false;
+
+            /** Path prefix for the endpoint. */
+            private String path = "/jamjet";
+
+            public boolean isEnabled() {
+                return enabled;
+            }
+
+            public void setEnabled(boolean enabled) {
+                this.enabled = enabled;
+            }
+
+            public String getPath() {
+                return path;
+            }
+
+            public void setPath(String path) {
+                this.path = path;
+            }
+        }
     }
 
     /**

@@ -238,7 +238,11 @@ final class AgentIrCompiler {
             require = new ArrayList<>(merged);
         }
 
-        return new PolicySetIr(blocked, require, allowlist);
+        // Carry the approval deadline through: rebuilding the policy from its lists alone
+        // would drop it, and the engine would park the request with no deadline.
+        Long timeout = agent.policy() != null ? agent.policy().approvalTimeoutSecs() : null;
+        Long escalate = agent.policy() != null ? agent.policy().escalateAfterSecs() : null;
+        return new PolicySetIr(blocked, require, allowlist, timeout, escalate);
     }
 
     // -- helpers ----------------------------------------------------------------

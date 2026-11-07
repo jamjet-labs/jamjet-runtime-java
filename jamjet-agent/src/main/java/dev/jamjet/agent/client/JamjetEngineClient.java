@@ -69,14 +69,27 @@ public final class JamjetEngineClient implements AutoCloseable {
      * @param tenantId    optional; sent as {@code X-Tenant-Id} when non-blank
      */
     public JamjetEngineClient(String baseUrl, String bearerToken, String tenantId) {
-        this.baseUrl = stripTrailingSlash(baseUrl);
-        this.bearerToken = bearerToken;
-        this.tenantId = tenantId;
-        this.http = HttpClient.newBuilder()
+        this(stripTrailingSlash(baseUrl), bearerToken, tenantId, HttpClient.newBuilder()
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
                 .connectTimeout(CONNECT_TIMEOUT)
-                .build();
+                .build());
+    }
+
+    private JamjetEngineClient(String baseUrl, String bearerToken, String tenantId, HttpClient http) {
+        this.baseUrl = baseUrl;
+        this.bearerToken = bearerToken;
+        this.tenantId = tenantId;
+        this.http = http;
         this.json = JamjetJson.shared();
+    }
+
+    /**
+     * The same engine and tenant, acting as {@code bearerToken}. Use it to send a decision
+     * with the decider's own token: the engine records the approver from the token, and
+     * refuses a run's own initiator as its approver.
+     */
+    public JamjetEngineClient withBearerToken(String bearerToken) {
+        return new JamjetEngineClient(baseUrl, bearerToken, tenantId, http);
     }
 
     // -- Workflows --------------------------------------------------------------
@@ -127,6 +140,86 @@ public final class JamjetEngineClient implements AutoCloseable {
             return list.stream().map(e -> (Map<String, Object>) e).toList();
         }
         return List.of();
+    }
+
+    // -- Approvals ---------------------------------------------------------------
+
+    /** {@code GET /executions/{id}/approvals}: pending and decided approvals. */
+    public ApprovalList listApprovals(String executionId) {
+        ApprovalList list = getJson("/executions/" + executionId + "/approvals", ApprovalList.class);
+        return list == null ? new ApprovalList(List.of(), List.of()) : list;
+    }
+
+    /**
+     * Approves the request a reviewer was shown. Echoes its node and its
+     * {@link PendingApproval#binding() binding} as {@code action_digest}, so the engine
+     * refuses the decision (HTTP 409) if that request has since been replaced.
+     *
+     * <p>Pass the {@code PendingApproval} the reviewer actually saw. Listing and approving
+     * in one step would approve whatever is pending, unseen.</p>
+     */
+    public ApprovalResult approve(String executionId, PendingApproval reviewed, String comment) {
+        if (reviewed == null) {
+            throw new IllegalArgumentException("approve needs the pending approval that was reviewed");
+        }
+        return approve(executionId, reviewed.nodeId(), reviewed.binding(), comment);
+    }
+
+    /**
+     * {@code POST /executions/{id}/approve} with {@code decision: "approved"}.
+     *
+     * @param actionDigest the {@code action_digest} (or {@code calls_hash}) from the reviewed
+     *                     request's context. Outside dev mode the engine requires it to approve
+     *                     (HTTP 400 without it) and refuses a stale one (HTTP 409).
+     */
+    public ApprovalResult approve(String executionId, String nodeId, String actionDigest, String comment) {
+        return decide(executionId, "approved", nodeId, actionDigest, comment);
+    }
+
+    /** {@code POST /executions/{id}/approve} with {@code decision: "rejected"}. */
+    public ApprovalResult reject(String executionId, String nodeId, String comment) {
+        return decide(executionId, "rejected", nodeId, null, comment);
+    }
+
+    private ApprovalResult decide(String executionId, String decision, String nodeId,
+                                  String actionDigest, String comment) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("decision", decision);
+        if (nodeId != null) {
+            body.put("node_id", nodeId);
+        }
+        if (actionDigest != null) {
+            body.put("action_digest", actionDigest);
+        }
+        if (comment != null) {
+            body.put("comment", comment);
+        }
+        return postJson("/executions/" + executionId + "/approve", body, ApprovalResult.class);
+    }
+
+    /** {@code POST /executions/{id}/external-event}. Body {@code {correlation_key, payload}}. */
+    public void sendExternalEvent(String executionId, String correlationKey, Object payload) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("correlation_key", correlationKey);
+        body.put("payload", payload == null ? Map.of() : payload);
+        execute(buildPost("/executions/" + executionId + "/external-event", body));
+    }
+
+    // -- Audit -------------------------------------------------------------------
+
+    /**
+     * {@code GET /audit?limit=N} as the raw response text, for
+     * {@link dev.jamjet.agent.audit.RuntimeAuditVerifier#loadEntries}. Kept as text: the
+     * entry hashes cover each number as the runtime wrote it. The engine caps {@code limit}
+     * at 200; page with {@code offset}.
+     */
+    public String auditLogText(int limit, int offset) {
+        return execute(buildGet("/audit?limit=" + limit + "&offset=" + offset));
+    }
+
+    /** {@code GET /.well-known/did.json} as text: the runtime's published audit key. */
+    public String didDocumentText() {
+        return execute(buildGet("/.well-known/did.json"));
     }
 
     // -- Work items (worker protocol) ------------------------------------------

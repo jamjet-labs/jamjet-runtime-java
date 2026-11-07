@@ -57,10 +57,36 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- Optional: the approval endpoint is configured only in a servlet web app that
+             already has Spring MVC, and only when jamjet.agent.approvals.endpoint.enabled
+             is true. Its auto-configuration is guarded by class-name conditions, so an app
+             without Spring MVC never loads it. -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-web</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-webmvc</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.wiremock</groupId>
+            <artifactId>wiremock-standalone</artifactId>
+            <version>3.9.2</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
