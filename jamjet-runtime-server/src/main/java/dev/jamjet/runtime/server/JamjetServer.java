@@ -92,6 +92,9 @@ public class JamjetServer {
         Javalin app = Javalin.create(cfg -> {
             cfg.jsonMapper(new JavalinJackson(JamjetJson.shared(), false));
             cfg.showJavalinBanner = false;
+            // So an app started by hand with start() or start(port) binds the configured
+            // host (loopback unless set), not every interface.
+            cfg.jetty.defaultHost = config.host();
         });
 
         if (hook != null) {

@@ -157,4 +157,22 @@ class SchedulerTest {
         assertEquals(1, events.stream().filter(e -> e.kind() instanceof EventKind.RunStalled).count());
         assertEquals(0, events.stream().filter(e -> e.kind() instanceof EventKind.NodeScheduled).count());
     }
+
+    @Test
+    void anExpiredLeaseOfAStalledRunIsNotRetried() throws Exception {
+        var ir = simpleWorkflow();
+        registerWorkflow(ir);
+        ExecutionId execId = startExecution("simple", "1");
+        backend.appendEvent(Event.create(execId, 2, new EventKind.Unknown()));
+        backend.enqueueWorkItem(new WorkItem(java.util.UUID.randomUUID(), execId, "a", "tool",
+                mapper.createObjectNode(), 1, 3, Instant.now(), Instant.now().minusSeconds(60), "gone-worker"));
+
+        scheduler.tick();
+
+        List<Event> events = backend.getEvents(execId);
+        assertEquals(0, events.stream().filter(e -> e.kind() instanceof EventKind.RetryScheduled).count());
+        assertEquals(0, events.stream().filter(e -> e.kind() instanceof EventKind.NodeFailed).count());
+        assertTrue(backend.claimWorkItem("worker-1", List.of("tool")).isEmpty(),
+                "the reclaimed item of a stalled run must not be queued again");
+    }
 }

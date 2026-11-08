@@ -112,8 +112,65 @@ class RustEventLogCompatTest {
         ObjectMapper mapper = JamjetJson.shared();
         List<Event> events = mapper.readValue(RUST_LOG, new TypeReference<List<Event>>() {});
         for (Event event : events) {
-            Event again = mapper.readValue(mapper.writeValueAsString(event), Event.class);
-            assertThat(again.kind()).isEqualTo(event.kind());
+            String written = mapper.writeValueAsString(event);
+            Event again = mapper.readValue(written, Event.class);
+            if (event.kind() instanceof EventKind.Unknown) {
+                // as in Rust: an unknown kind is written back as {"type":"unknown"}
+                assertThat(mapper.writeValueAsString(event.kind())).isEqualTo("{\"type\":\"unknown\"}");
+                assertThat(again.kind()).isInstanceOf(EventKind.Unknown.class);
+            } else {
+                assertThat(again.kind()).isEqualTo(event.kind());
+            }
         }
+    }
+
+    @Test
+    void anUnknownValueInsideAKnownKindDoesNotFailTheLog() throws Exception {
+        String log = "[" + event(1, "{\"type\":\"node_scheduled\",\"node_id\":\"n\",\"queue_type\":\"gpu_tool\"}") + ","
+                + event(2, "{\"type\":\"approval_received\",\"node_id\":\"n\",\"user_id\":\"ops\","
+                + "\"decision\":\"deferred\",\"comment\":null,\"state_patch\":null}") + "]";
+        List<Event> events = JamjetJson.shared().readValue(log, new TypeReference<List<Event>>() {});
+        assertThat(events).hasSize(2);
+    }
+
+    @Test
+    void anUnknownKindKeepsItsOriginalTypeAndFields() throws Exception {
+        EventKind kind = JamjetJson.shared().readValue(
+                "{\"type\":\"grant_revoked\",\"node_id\":\"pay\",\"scope\":[\"payments\"]}", EventKind.class);
+        var unknown = (EventKind.Unknown) kind;
+        assertThat(unknown.originalType()).isEqualTo("grant_revoked");
+        assertThat(unknown.fields().path("node_id").asText()).isEqualTo("pay");
+        assertThat(unknown.fields().path("scope").get(0).asText()).isEqualTo("payments");
+    }
+
+    @Test
+    void aKnownKindLoadsWithAStrictMapperToo() throws Exception {
+        ObjectMapper strict = com.fasterxml.jackson.databind.json.JsonMapper.builder()
+                .propertyNamingStrategy(com.fasterxml.jackson.databind.PropertyNamingStrategies.SNAKE_CASE)
+                .addModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule())
+                .build();
+        EventKind kind = strict.readValue("{\"type\":\"run_stalled\",\"reason\":\"r\"}", EventKind.class);
+        assertThat(kind).isEqualTo(new EventKind.RunStalled("r"));
+        assertThat(strict.writeValueAsString(kind)).isEqualTo("{\"type\":\"run_stalled\",\"reason\":\"r\"}");
+    }
+
+    @Test
+    void anUnknownDecisionAuthorisesNothing() throws Exception {
+        String log = "[" + event(1, "{\"type\":\"approval_received\",\"node_id\":\"n\",\"user_id\":\"ops\","
+                + "\"decision\":\"deferred\",\"comment\":null,\"state_patch\":null}") + "]";
+        List<Event> events = JamjetJson.shared().readValue(log, new TypeReference<List<Event>>() {});
+        assertThat(((EventKind.ApprovalReceived) events.get(0).kind()).decision()).isEqualTo(ApprovalDecision.UNKNOWN);
+        assertThat(dev.jamjet.runtime.core.scheduler.RunnableNodeDetector.hasUnreadableEvent(events)).isTrue();
+        assertThat(dev.jamjet.runtime.core.state.StateMaterializer.applyEvents(null, events).indeterminate()).isTrue();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> ApprovalDecision.fromValue("deferred"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void theMaterializerReportsAnUnreadableLogAsIndeterminate() throws Exception {
+        List<Event> events = JamjetJson.shared().readValue(RUST_LOG, new TypeReference<List<Event>>() {});
+        assertThat(dev.jamjet.runtime.core.state.StateMaterializer.applyEvents(null, events).indeterminate()).isTrue();
+        assertThat(dev.jamjet.runtime.core.state.StateMaterializer.applyEvents(null, events.subList(0, 11)).indeterminate())
+                .isFalse();
     }
 }

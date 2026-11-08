@@ -1,5 +1,7 @@
 package dev.jamjet.runtime.core.worker;
 
+import dev.jamjet.runtime.core.scheduler.RunnableNodeDetector;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.jamjet.runtime.core.JamjetJson;
@@ -103,6 +105,17 @@ public class Worker implements Runnable {
         long startTime = System.currentTimeMillis();
 
         try {
+            // A run whose log holds something this build cannot read may have been cancelled
+            // or denied by it. Do not run its work: dead-letter the item and leave the log as
+            // it is, as the scheduler does (RunStalled). A build that reads the whole log
+            // re-dispatches.
+            if (RunnableNodeDetector.hasUnreadableEvent(backend.getEvents(item.executionId()))) {
+                log.warn("Worker {} refusing item {} of execution {}: its event log holds an event this "
+                        + "build cannot read", workerId, item.id(), item.executionId());
+                backend.moveToDeadLetter(item.id(), "run stalled: event log holds an event this build cannot read");
+                return;
+            }
+
             // Emit NodeStarted
             long seq = backend.latestSequence(item.executionId()) + 1;
             backend.appendEvent(Event.create(item.executionId(), seq,

@@ -122,4 +122,15 @@ class ServerBindTest {
         }
         return null;
     }
+
+    @Test
+    void anAppFromCreateAppStartedByHandBindsTheConfiguredHost() {
+        Javalin app = JamjetServer.createApp(new InMemoryStateBackend(), new ServerConfig(0, "in-memory", null));
+        app.start(0);
+        try {
+            assertThat(boundHosts(app)).containsExactly("127.0.0.1");
+        } finally {
+            app.stop();
+        }
+    }
 }

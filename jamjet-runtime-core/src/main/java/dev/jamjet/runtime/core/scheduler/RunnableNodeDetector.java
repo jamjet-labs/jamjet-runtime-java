@@ -86,10 +86,15 @@ public final class RunnableNodeDetector {
         return runnable;
     }
 
-    /** True when the log holds an event kind this build does not know. */
+    /**
+     * True when the log holds something this build cannot read: an event kind it does not
+     * know, or an approval decision it does not know. Either may be a denial.
+     */
     public static boolean hasUnreadableEvent(List<Event> events) {
         for (Event event : events) {
-            if (event.kind() instanceof EventKind.Unknown) {
+            if (event.kind() instanceof EventKind.Unknown
+                    || (event.kind() instanceof EventKind.ApprovalReceived ar
+                        && ar.decision() == dev.jamjet.runtime.core.event.ApprovalDecision.UNKNOWN)) {
                 return true;
             }
         }

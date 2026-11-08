@@ -1,9 +1,14 @@
 package dev.jamjet.runtime.core.event;
 
+import com.fasterxml.jackson.annotation.JsonAnySetter;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.jamjet.runtime.core.QueueType;
 
 import java.time.Instant;
@@ -19,7 +24,8 @@ import java.util.UUID;
  * matter: it may be a revocation or a denial, so the scheduler does not advance a run whose
  * log holds one (see {@link RunStalled}).</p>
  */
-@JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "type", defaultImpl = EventKind.Unknown.class)
+@JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "type", defaultImpl = EventKind.Unknown.class, visible = true)
+@JsonIgnoreProperties({"type"})
 @JsonSubTypes({
         // Workflow lifecycle
         @JsonSubTypes.Type(value = EventKind.WorkflowStarted.class, name = "workflow_started"),
@@ -535,10 +541,60 @@ public sealed interface EventKind {
     // ── Unknown ─────────────────────────────────────────────────────
 
     /**
-     * An event kind this build does not know, written by a later release. Its fields are
-     * dropped; writing it back produces {@code {"type":"unknown"}}. Treat it as possibly a
-     * denial or revocation: never as permission to proceed.
+     * An event kind this build does not know, written by a later release. Its original
+     * {@code type} and fields are kept in memory ({@link #originalType()}, {@link #fields()})
+     * for diagnostics; writing it back produces {@code {"type":"unknown"}}, as in the Rust
+     * runtime. Treat it as possibly a denial or revocation: never as permission to proceed.
      */
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record Unknown() implements EventKind {}
+    final class Unknown implements EventKind {
+        private String originalType = "unknown";
+        private final ObjectNode fields = JsonNodeFactory.instance.objectNode();
+
+        public Unknown() {}
+
+        public Unknown(String originalType, ObjectNode fields) {
+            this.originalType = originalType == null ? "unknown" : originalType;
+            if (fields != null) {
+                this.fields.setAll(fields);
+            }
+        }
+
+        /** The {@code type} the event was written with. */
+        @JsonIgnore
+        public String originalType() {
+            return originalType;
+        }
+
+        /** The event's other fields, as written. */
+        @JsonIgnore
+        public ObjectNode fields() {
+            return fields.deepCopy();
+        }
+
+        @JsonProperty(value = "type", access = JsonProperty.Access.WRITE_ONLY)
+        void readType(String type) {
+            this.originalType = type;
+        }
+
+        @JsonAnySetter
+        void readField(String name, JsonNode value) {
+            fields.set(name, value);
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            return o instanceof Unknown u && originalType.equals(u.originalType) && fields.equals(u.fields);
+        }
+
+        @Override
+        public int hashCode() {
+            return 31 * originalType.hashCode() + fields.hashCode();
+        }
+
+        @Override
+        public String toString() {
+            return "Unknown[type=" + originalType + ", fields=" + fields + "]";
+        }
+    }
 }

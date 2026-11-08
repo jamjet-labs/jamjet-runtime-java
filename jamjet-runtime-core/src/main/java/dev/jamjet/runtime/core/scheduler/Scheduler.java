@@ -86,6 +86,11 @@ public class Scheduler implements Runnable {
         ReclaimResult result = backend.reclaimExpiredLeases();
 
         for (WorkItem item : result.retryable()) {
+            if (stalled(item.executionId())) {
+                // Not retried and nothing appended: the run is left as it is.
+                backend.moveToDeadLetter(item.id(), "run stalled: event log holds an event this build cannot read");
+                continue;
+            }
             long seq = backend.latestSequence(item.executionId()) + 1;
             backend.appendEvent(Event.create(item.executionId(), seq,
                     new EventKind.NodeFailed(item.nodeId(), "Lease expired", item.attempt(), true)));
@@ -94,11 +99,18 @@ public class Scheduler implements Runnable {
         }
 
         for (WorkItem item : result.exhausted()) {
+            if (stalled(item.executionId())) {
+                continue;
+            }
             long seq = backend.latestSequence(item.executionId()) + 1;
             backend.appendEvent(Event.create(item.executionId(), seq,
                     new EventKind.NodeFailed(item.nodeId(), "Lease expired — max attempts exhausted",
                             item.attempt(), false)));
         }
+    }
+
+    private boolean stalled(ExecutionId executionId) throws StateBackendException {
+        return RunnableNodeDetector.hasUnreadableEvent(backend.getEvents(executionId));
     }
 
     private void scheduleRunnableNodes(WorkflowExecution execution) throws Exception {
@@ -183,8 +195,15 @@ public class Scheduler implements Runnable {
         log.warn("Execution {} holds an event kind this build cannot read; not advancing it",
                 execution.executionId());
         long seq = backend.latestSequence(execution.executionId()) + 1;
+        String unread = events.stream()
+                .map(Event::kind)
+                .filter(k -> k instanceof EventKind.Unknown)
+                .map(k -> ((EventKind.Unknown) k).originalType())
+                .distinct()
+                .collect(java.util.stream.Collectors.joining(", "));
         backend.appendEvent(Event.create(execution.executionId(), seq,
-                new EventKind.RunStalled("event log holds an event kind this build cannot read")));
+                new EventKind.RunStalled("event log holds an event this build cannot read"
+                        + (unread.isEmpty() ? " (an unknown approval decision)" : ": " + unread))));
     }
 
     private long countActiveNodes(List<Event> events) {
