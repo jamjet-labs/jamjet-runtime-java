@@ -38,10 +38,32 @@ class ArgumentFingerprintTest {
         public int getQty() {
             return qty;
         }
+
+        @Override
+        public boolean equals(Object o) {
+            return o instanceof Order other && other.sku.equals(sku) && other.qty == qty;
+        }
+
+        @Override
+        public int hashCode() {
+            return java.util.Objects.hash(sku, qty);
+        }
     }
 
+    /** A value object that can point at itself. */
     public static class Node {
+        public final String label = "n";
         public Node next;
+
+        @Override
+        public boolean equals(Object o) {
+            return o instanceof Node other && other.label.equals(label);
+        }
+
+        @Override
+        public int hashCode() {
+            return label.hashCode();
+        }
     }
 
     private static final Method M = method();
@@ -102,7 +124,7 @@ class ArgumentFingerprintTest {
     }
 
     @Test
-    void anObjectJacksonCannotReadIsRefused() {
+    void anObjectWithIdentitySemanticsIsRefused() {
         Object opaque = new Object();
         assertThatThrownBy(() -> fp(opaque))
                 .isInstanceOf(CheckpointKeyException.class)

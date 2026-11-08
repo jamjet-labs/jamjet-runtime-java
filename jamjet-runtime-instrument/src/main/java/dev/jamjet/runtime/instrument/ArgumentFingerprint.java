@@ -1,10 +1,10 @@
 package dev.jamjet.runtime.instrument;
 
-import com.fasterxml.jackson.databind.MapperFeature;
+import com.fasterxml.jackson.databind.BeanDescription;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
+import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
 import com.fasterxml.jackson.databind.json.JsonMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 import java.lang.reflect.Array;
 import java.lang.reflect.Method;
@@ -32,21 +32,18 @@ import java.util.UUID;
  *
  * <p>Value types (strings, numbers, booleans, characters, enums, {@code java.time} values,
  * UUIDs, URIs), arrays, {@code Optional}, records, collections and maps are encoded
- * structurally. Sets and maps are encoded order-independently. Any other object is
- * encoded as JSON with Jackson, properties and map keys sorted. An argument that cannot
- * be encoded (Jackson finds no properties, a cycle, nesting deeper than
- * {@value #MAX_DEPTH}) raises {@link CheckpointKeyException}.</p>
+ * structurally. Sets and maps are encoded order-independently. Any other object must be a
+ * value object (its own {@code equals} and {@code hashCode}); its readable properties are
+ * encoded by the same rules, sorted by name. An argument that cannot be encoded (identity
+ * semantics such as a client or a lambda, no readable properties, a cycle, nesting deeper
+ * than {@value #MAX_DEPTH}) raises {@link CheckpointKeyException}.</p>
  */
 final class ArgumentFingerprint {
 
     static final int MAX_DEPTH = 32;
 
-    private static final ObjectMapper JSON = JsonMapper.builder()
-            .enable(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY)
-            .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
-            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
-            .addModule(new JavaTimeModule())
-            .build();
+    /** Used only to find a value object's readable properties, as Jackson would. */
+    private static final ObjectMapper JSON = JsonMapper.builder().build();
 
     private ArgumentFingerprint() {}
 
@@ -61,8 +58,8 @@ final class ArgumentFingerprint {
             } catch (CheckpointKeyException e) {
                 throw new CheckpointKeyException("@Checkpoint " + method.getDeclaringClass().getName() + "."
                         + method.getName() + ": argument " + i + " has no stable fingerprint ("
-                        + e.getMessage() + "). Pass a value type, a record or a Jackson-serializable object, "
-                        + "or call DurabilityContext.replayOrExecute with your own id.", e.getCause());
+                        + e.getMessage() + "). Pass a value type, a record, or an object with its own equals and "
+                        + "hashCode; or call DurabilityContext.replayOrExecute with your own id.", e.getCause());
             }
             out.append('|');
         }
@@ -152,13 +149,62 @@ final class ArgumentFingerprint {
             out.append(']');
             path.remove(v);
         } else {
-            String json;
+            encodeBean(out, v, type, depth, path);
+        }
+    }
+
+    /**
+     * A value object: its readable properties (as Jackson finds them), sorted by name, each
+     * encoded by these rules, so sets and maps inside it are order-independent too. A class
+     * that inherits {@code Object.equals} or {@code Object.hashCode} has identity semantics
+     * (a client, a session, a lambda): two calls with "the same" one cannot be told apart
+     * from two calls with different ones, so it is refused.
+     */
+    private static void encodeBean(StringBuilder out, Object v, Class<?> type, int depth, Set<Object> path) {
+        if (!hasValueSemantics(type)) {
+            throw new CheckpointKeyException(type.getName() + " has identity semantics (no equals and hashCode of "
+                    + "its own): a client, a session or a lambda cannot key a checkpoint. Pass the values it "
+                    + "carries, make it a record, or give it equals and hashCode");
+        }
+        List<BeanPropertyDefinition> props;
+        try {
+            BeanDescription desc = JSON.getSerializationConfig().introspect(JSON.constructType(type));
+            props = desc.findProperties().stream()
+                    .filter(BeanPropertyDefinition::couldSerialize)
+                    .filter(p -> p.getAccessor() != null)
+                    .sorted(java.util.Comparator.comparing(BeanPropertyDefinition::getName))
+                    .toList();
+        } catch (RuntimeException e) {
+            throw new CheckpointKeyException("cannot read the properties of " + type.getName() + ": " + e, e);
+        }
+        if (props.isEmpty()) {
+            throw new CheckpointKeyException(type.getName() + " has no readable properties");
+        }
+        enter(path, v);
+        out.append('B').append(type.getName()).append('{');
+        for (BeanPropertyDefinition p : props) {
+            AnnotatedMember accessor = p.getAccessor();
+            Object value;
             try {
-                json = JSON.writeValueAsString(v);
-            } catch (Exception e) {
-                throw new CheckpointKeyException(type.getName() + " is not JSON-serializable: " + e.getMessage(), e);
+                accessor.fixAccess(true);
+                value = accessor.getValue(v);
+            } catch (RuntimeException e) {
+                throw new CheckpointKeyException("cannot read " + type.getName() + "." + p.getName() + ": " + e, e);
             }
-            text(out, 'J', type.getName() + '=' + json);
+            out.append(p.getName()).append('=');
+            encode(out, value, depth + 1, path);
+            out.append(',');
+        }
+        out.append('}');
+        path.remove(v);
+    }
+
+    static boolean hasValueSemantics(Class<?> type) {
+        try {
+            return type.getMethod("equals", Object.class).getDeclaringClass() != Object.class
+                    && type.getMethod("hashCode").getDeclaringClass() != Object.class;
+        } catch (NoSuchMethodException e) {
+            return false;
         }
     }
 

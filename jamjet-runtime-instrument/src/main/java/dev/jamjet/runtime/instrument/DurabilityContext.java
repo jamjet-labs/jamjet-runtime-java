@@ -20,12 +20,29 @@ import java.util.function.Supplier;
  * surviving a restart means saving {@link #getRecords()} yourself and loading them into a
  * fresh context with {@link #restore}, then turning replay mode on.</p>
  *
- * <p>With the JamJet javaagent attached, {@code @Checkpoint} methods record here too.
- * Their ids combine the checkpoint name, a fingerprint of the arguments and the call's
- * position among calls with the same name and arguments, so {@code charge("alice")}
- * never replays {@code charge("bob")}, and the second {@code poll()} replays the second
- * result. A {@code @Checkpoint} call that throws is recorded as a failure and replays by
- * throwing again; it is never replayed as a successful return.</p>
+ * <p>With the JamJet javaagent attached, {@code @Checkpoint} methods record here too, under
+ * ids of the form {@code name#n@fingerprint}: the checkpoint name, the call's position
+ * among calls with that name, and a fingerprint of the arguments. Replay matches a call by
+ * name and position; if its arguments differ from the recorded ones it throws
+ * {@link CheckpointNondeterminismException} rather than return another call's result or
+ * repeat a side effect. The second {@code poll()} replays the second result. A call that
+ * throws an {@link Exception} is recorded as a failure and replays by throwing again; it is
+ * never replayed as a successful return.</p>
+ *
+ * <p>To persist a run, save each record's {@code id}, {@code failed} flag, and either its
+ * {@code value} or its {@code failureType} and {@code failureMessage}; load them with
+ * {@link #restore} ({@link CheckpointRecord#failure(String, String, String)} for a failure).
+ * The id carries the argument fingerprint, so nothing else is needed. A restored failure
+ * replays as an instance of its original exception class when that class can be loaded and
+ * built from its message (otherwise the nearest superclass that can, with a suppressed
+ * {@link CheckpointReplayException} naming the original), so {@code catch} blocks behave as
+ * they did. Restore only records your own code saved: restoring builds exceptions by class
+ * name.</p>
+ *
+ * <p>Records written by 0.4.0 under the old {@code @Checkpoint} ids ({@code Class.method} or
+ * the bare {@code @Checkpoint} value) are not read as {@code @Checkpoint} records. In 0.4.0
+ * the agent path failed with {@code IllegalAccessError} for any class outside this package,
+ * so such records should not exist; ids you passed to {@link #replayOrExecute} are unchanged.</p>
  *
  * <p>Usage pattern:</p>
  * <pre>{@code
@@ -44,7 +61,11 @@ public final class DurabilityContext {
 
     private boolean replayMode = false;
     private final Map<String, CheckpointRecord> records = new LinkedHashMap<>();
+    /** {@code name#n} of each {@code @Checkpoint} record to its full id. */
+    private final Map<String, String> byPosition = new HashMap<>();
     private final Map<String, Integer> occurrences = new HashMap<>();
+    private static final java.util.regex.Pattern CHECKPOINT_ID =
+            java.util.regex.Pattern.compile("(.*#\\d+)@[0-9a-f]{32}");
 
     private DurabilityContext() {}
 
@@ -160,6 +181,19 @@ public final class DurabilityContext {
      */
     public synchronized void restore(CheckpointRecord record) {
         records.put(record.id(), record);
+        java.util.regex.Matcher m = CHECKPOINT_ID.matcher(record.id());
+        if (m.matches()) {
+            byPosition.put(m.group(1), record.id());
+        }
+    }
+
+    /**
+     * The {@code @Checkpoint} record at {@code position} ({@code name#n}, as in its id before
+     * the {@code @}), whatever its argument fingerprint, or {@code null}.
+     */
+    synchronized CheckpointRecord getRecordAtPosition(String position) {
+        String id = byPosition.get(position);
+        return id == null ? null : records.get(id);
     }
 
     /**

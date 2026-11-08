@@ -97,10 +97,12 @@ The lambda is the unit of idempotency. The ID is the checkpoint name. Same name,
 `@DurableAgent` and `@Checkpoint` are pure marker annotations. At class load time, the JamJet
 Java agent (a standard `-javaagent` JVM flag) uses ByteBuddy to transform any class annotated
 with `@DurableAgent`. Each method annotated with `@Checkpoint` is wrapped with advice that records
-its outcome in the current `DurabilityContext`. The checkpoint ID combines the checkpoint name, a
-fingerprint of the arguments and the call's position among calls with the same arguments, so
-`charge("alice")` never replays `charge("bob")` and the second call in a loop replays the second
-result. A call that threw is recorded as a failure and replays by throwing again.
+its outcome in the current `DurabilityContext`. A replayed call is matched by its checkpoint name
+and its position among calls with that name, so the second call in a loop replays the second
+result. The record also holds a fingerprint of the arguments: if a replayed call's arguments
+differ, it is refused with `CheckpointNondeterminismException` instead of returning another
+call's result or repeating the side effect. A call that threw an exception is recorded as a
+failure and replays by throwing it again; an `Error` or an interrupt is not recorded.
 
 This means you can choose your level of explicitness:
 

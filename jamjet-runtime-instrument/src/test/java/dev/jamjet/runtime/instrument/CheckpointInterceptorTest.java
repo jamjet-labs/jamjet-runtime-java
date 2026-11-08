@@ -97,7 +97,7 @@ class CheckpointInterceptorTest {
         assertThat(result).isEqualTo("result");
         assertThat(CALL_COUNT.get()).isEqualTo(1);
         assertThat(ctx.getRecords()).singleElement().satisfies(r -> {
-            assertThat(r.id()).startsWith("compute@").endsWith("#0");
+            assertThat(r.id()).startsWith("compute#0@");
             assertThat(r.failed()).isFalse();
             assertThat(r.value()).isEqualTo("result");
         });

@@ -1,5 +1,7 @@
 package com.example.durable;
 
+import dev.jamjet.runtime.instrument.CheckpointNondeterminismException;
+import dev.jamjet.runtime.instrument.CheckpointRecord;
 import dev.jamjet.runtime.instrument.DurabilityContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -46,7 +48,7 @@ class JavaagentCheckpointIT {
     }
 
     @Test
-    void replayIsKeyedByArguments() {
+    void replayRefusesChangedArguments() {
         DurabilityContext recording = DurabilityContext.create();
         DurabilityContext.setCurrent(recording);
         new PaymentAgent().charge("alice", 500);
@@ -54,9 +56,28 @@ class JavaagentCheckpointIT {
         DurabilityContext replay = replayOf(recording);
         DurabilityContext.setCurrent(replay);
         PaymentAgent agent = new PaymentAgent();
-        // bob was never charged: his call must run, not return alice's receipt
-        assertThat(agent.charge("bob", 500)).isEqualTo("receipt-bob-500-1");
-        assertThat(agent.executions).containsExactly("charge:bob:500");
+        // the first charge now names bob: not alice's receipt, and no second charge
+        assertThatThrownBy(() -> agent.charge("bob", 500)).isInstanceOf(CheckpointNondeterminismException.class);
+        assertThat(agent.executions).isEmpty();
+    }
+
+    @Test
+    void aFailureRestoredFromStorageReplaysAsItsCheckedType() {
+        DurabilityContext recording = DurabilityContext.create();
+        DurabilityContext.setCurrent(recording);
+        assertThatThrownBy(() -> new PaymentAgent().refund("alice")).isInstanceOf(PaymentAgent.RefundDeclined.class);
+
+        DurabilityContext replay = DurabilityContext.create();
+        for (CheckpointRecord r : recording.getRecords()) {
+            replay.restore(CheckpointRecord.failure(r.id(), r.failureType(), r.failureMessage()));
+        }
+        replay.setReplayMode(true);
+        DurabilityContext.setCurrent(replay);
+        PaymentAgent second = new PaymentAgent();
+        assertThatThrownBy(() -> second.refund("alice"))
+                .isInstanceOf(PaymentAgent.RefundDeclined.class)
+                .hasMessage("card closed for alice");
+        assertThat(second.executions).isEmpty();
     }
 
     @Test

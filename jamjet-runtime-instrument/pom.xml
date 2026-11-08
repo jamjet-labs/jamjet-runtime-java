@@ -28,14 +28,10 @@
             <version>${bytebuddy.version}</version>
         </dependency>
 
-        <!-- Jackson: argument fingerprints for checkpoint ids (versions from the BOM) -->
+        <!-- Jackson: finds a value object's properties for argument fingerprints (version from the BOM) -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.fasterxml.jackson.datatype</groupId>
-            <artifactId>jackson-datatype-jsr310</artifactId>
         </dependency>
 
         <!-- SLF4J -->

@@ -13,12 +13,27 @@ import java.util.stream.Collectors;
  * {@code @DurableAgent} class, which can sit in any package, so everything it touches here
  * is public. Not a stable API: call it only from instrumented code.
  *
- * <p>A checkpoint id is {@code name@args#n}: the {@link Checkpoint#value()} (or
- * {@code com.example.Agent#method(param types)} when empty), a fingerprint of the
- * arguments, and the call's position among calls with the same name and arguments in the
- * current pass. A checkpoint called from inside another checkpoint is scoped under the
- * outer call's id, so skipping the outer call on replay does not shift the positions of
- * later top-level calls.</p>
+ * <p>A checkpoint id is {@code name#n@fingerprint}. {@code name} is the
+ * {@link Checkpoint#value()} (or {@code com.example.Agent#method(param types)} when empty);
+ * {@code n} is the call's position among calls with that name in the current pass; the
+ * fingerprint covers the arguments. A replayed call is matched by {@code name#n}. When the
+ * recorded fingerprint differs, the arguments changed between runs and the call is refused
+ * with {@link CheckpointNondeterminismException}: it neither returns the other call's result
+ * nor runs the body again.</p>
+ *
+ * <p>A checkpoint called from inside another one is scoped under the outer call's id, so
+ * skipping the outer call on replay does not shift later top-level positions.</p>
+ *
+ * <p>What a position does not include: the instance the method was called on (two agent
+ * objects calling {@code charge} share one sequence), and the thread. Positions are only
+ * deterministic when one thread drives a context's checkpoints in the same order on every
+ * run; a context shared by threads racing each other gets positions in whatever order they
+ * win. Use one context per run and thread, or {@code replayOrExecute} with your own ids.</p>
+ *
+ * <p>What is recorded: the return value, or an {@link Exception} the call threw. An
+ * {@link Error} (out of memory, a stack overflow) and an interrupt
+ * ({@link InterruptedException}, an interrupted I/O call) are not outcomes of the step and
+ * are not recorded; they propagate, and a replay runs the call again.</p>
  */
 public final class CheckpointRuntime {
 
@@ -63,13 +78,18 @@ public final class CheckpointRuntime {
             return null;
         }
         Pending outer = ACTIVE.get();
-        String local = name(method) + '@' + ArgumentFingerprint.of(method, args);
-        String scope = outer != null && outer.context == ctx ? outer.id + '/' + local : local;
-        String id = scope + '#' + ctx.nextOccurrence(scope);
+        String name = name(method);
+        String fingerprint = ArgumentFingerprint.of(method, args);
+        String scope = outer != null && outer.context == ctx ? outer.id + '/' + name : name;
+        String position = scope + '#' + ctx.nextOccurrence(scope);
+        String id = position + '@' + fingerprint;
 
         if (ctx.isReplayMode()) {
-            CheckpointRecord recorded = ctx.getRecord(id);
+            CheckpointRecord recorded = ctx.getRecordAtPosition(position);
             if (recorded != null) {
+                if (!recorded.id().equals(id)) {
+                    throw new CheckpointNondeterminismException(position, recorded.id(), id);
+                }
                 if (recorded.failed()) {
                     throw sneakyThrow(recorded.replayFailure());
                 }
@@ -93,7 +113,9 @@ public final class CheckpointRuntime {
         if (entered instanceof Pending pending) {
             try {
                 if (thrown != null) {
-                    pending.context.recordFailure(pending.id, thrown);
+                    if (recordable(thrown)) {
+                        pending.context.recordFailure(pending.id, thrown);
+                    }
                 } else {
                     pending.context.recordResult(pending.id, returned);
                 }
@@ -106,6 +128,22 @@ public final class CheckpointRuntime {
             }
         }
         return returned;
+    }
+
+    /**
+     * Whether a throw is an outcome of the step, to be replayed as the same failure: an
+     * {@link Exception} that is not an interrupt. An {@link Error} or an interrupt says
+     * nothing about the step and would freeze a transient condition into the run forever.
+     */
+    static boolean recordable(Throwable thrown) {
+        if (!(thrown instanceof Exception)) {
+            return false;
+        }
+        if (thrown instanceof InterruptedException || thrown instanceof java.nio.channels.ClosedByInterruptException) {
+            return false;
+        }
+        return !(thrown instanceof java.io.InterruptedIOException)
+                || thrown instanceof java.net.SocketTimeoutException;
     }
 
     /** The checkpoint name: {@link Checkpoint#value()}, or the declaring class, method and parameter types. */

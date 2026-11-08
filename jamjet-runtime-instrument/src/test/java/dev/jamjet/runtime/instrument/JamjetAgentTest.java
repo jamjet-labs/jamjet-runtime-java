@@ -91,7 +91,7 @@ class JamjetAgentTest {
             assertThat(r1).isEqualTo("agent-result");
             assertThat(AgentSampleClass.callCount).isEqualTo(1);
             assertThat(ctx.getRecords()).singleElement()
-                    .satisfies(r -> assertThat(r.id()).startsWith("agentStep@"))
+                    .satisfies(r -> assertThat(r.id()).startsWith("agentStep#0@"))
                     .satisfies(r -> assertThat(r.value()).isEqualTo("agent-result"));
 
             // Replay — body should be skipped

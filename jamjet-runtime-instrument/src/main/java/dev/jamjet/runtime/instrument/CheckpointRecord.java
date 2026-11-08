@@ -9,7 +9,13 @@ import java.util.Objects;
  *
  * <p>{@code failure} holds the original exception when the record was made in this
  * process. A record restored from storage carries only {@code failureType} and
- * {@code failureMessage}; replaying it throws {@link CheckpointReplayException}.</p>
+ * {@code failureMessage}; replaying it throws a new instance of {@code failureType} built
+ * from the message when that class can be loaded and has a public {@code (String)},
+ * {@code (String, Throwable)} or no-argument constructor. Otherwise it walks up to the
+ * nearest superclass that can be built, so a {@code catch} of any of those supertypes still
+ * matches. The rebuilt exception carries a suppressed {@link CheckpointReplayException}
+ * naming the original type. If no class can be loaded, the replay throws
+ * {@link CheckpointReplayException} itself.</p>
  *
  * @param id             the checkpoint id the outcome is stored under
  * @param value          the returned value (always {@code null} for a failure)
@@ -70,6 +76,66 @@ public record CheckpointRecord(
         if (!failed) {
             throw new IllegalStateException("not a failure record: " + id);
         }
-        return failure != null ? failure : new CheckpointReplayException(id, failureType, failureMessage);
+        if (failure != null) {
+            return failure;
+        }
+        CheckpointReplayException marker = new CheckpointReplayException(id, failureType, failureMessage);
+        Throwable rebuilt = rebuild(failureType, failureMessage);
+        if (rebuilt == null) {
+            return marker;
+        }
+        rebuilt.addSuppressed(marker);
+        return rebuilt;
+    }
+
+    /** An instance of {@code type}, or of its nearest buildable superclass, or {@code null}. */
+    static Throwable rebuild(String type, String message) {
+        Class<?> c = load(type);
+        if (c == null || !Exception.class.isAssignableFrom(c)) {
+            return null;
+        }
+        for (Class<?> k = c; k != null && Exception.class.isAssignableFrom(k); k = k.getSuperclass()) {
+            Throwable t = construct(k, message);
+            if (t != null) {
+                return t;
+            }
+        }
+        return null;
+    }
+
+    private static Class<?> load(String type) {
+        for (ClassLoader loader : new ClassLoader[]{
+                Thread.currentThread().getContextClassLoader(), CheckpointRecord.class.getClassLoader()}) {
+            if (loader == null) {
+                continue;
+            }
+            try {
+                return Class.forName(type, false, loader);
+            } catch (ClassNotFoundException | LinkageError e) {
+                // try the next loader
+            }
+        }
+        return null;
+    }
+
+    private static Throwable construct(Class<?> k, String message) {
+        if (java.lang.reflect.Modifier.isAbstract(k.getModifiers())) {
+            return null;
+        }
+        try {
+            return (Throwable) k.getConstructor(String.class).newInstance(message);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
+            // next shape
+        }
+        try {
+            return (Throwable) k.getConstructor(String.class, Throwable.class).newInstance(message, null);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
+            // next shape
+        }
+        try {
+            return (Throwable) k.getConstructor().newInstance();
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
+            return null;
+        }
     }
 }

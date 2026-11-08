@@ -102,13 +102,18 @@ class CheckpointKeyingTest {
         DurabilityContext.setCurrent(ctx);
         Billing billing = new Billing();
         assertThat(billing.charge("alice")).isEqualTo("receipt-alice");
+        assertThat(billing.charge("bob")).isEqualTo("receipt-bob");
 
         ctx.setReplayMode(true);
         RUNS.clear();
-        assertThat(billing.charge("bob")).isEqualTo("receipt-bob");
-        assertThat(RUNS).containsExactly("charge:bob");
         assertThat(billing.charge("alice")).isEqualTo("receipt-alice");
-        assertThat(RUNS).containsExactly("charge:bob");
+        assertThat(billing.charge("bob")).isEqualTo("receipt-bob");
+        assertThat(RUNS).isEmpty();
+
+        // the first call now has bob's arguments: neither alice's receipt nor a new charge
+        ctx.setReplayMode(true);
+        assertThatThrownBy(() -> billing.charge("bob")).isInstanceOf(CheckpointNondeterminismException.class);
+        assertThat(RUNS).isEmpty();
     }
 
     @Test
@@ -165,7 +170,7 @@ class CheckpointKeyingTest {
     /** The id the top-level charge was recorded under: the last one recorded. */
     private static String topLevelChargeId(DurabilityContext ctx) {
         return ctx.getCheckpointIds().stream()
-                .filter(id -> id.startsWith("charge@"))
+                .filter(id -> id.startsWith("charge#"))
                 .reduce((first, second) -> second)
                 .orElseThrow();
     }
@@ -185,10 +190,13 @@ class CheckpointKeyingTest {
         DurabilityContext.setCurrent(replay);
         RUNS.clear();
 
+        // rebuilt as its original type, so catch (IllegalStateException) still matches,
+        // with a marker saying it came from a stored record
         assertThatThrownBy(() -> billing.refund("alice"))
-                .isInstanceOf(CheckpointReplayException.class)
-                .hasMessageContaining("java.lang.IllegalStateException")
-                .hasMessageContaining("declined: alice");
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("declined: alice")
+                .satisfies(e -> assertThat(e.getSuppressed()).singleElement()
+                        .isInstanceOf(CheckpointReplayException.class));
         assertThat(RUNS).isEmpty();
     }
 

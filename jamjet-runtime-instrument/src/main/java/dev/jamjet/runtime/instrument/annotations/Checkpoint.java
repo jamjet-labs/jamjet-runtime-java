@@ -14,11 +14,22 @@ import java.lang.annotation.Target;
  * stored failure is thrown again. Requires the JamJet javaagent.
  * </p>
  * <p>
- * Each call is recorded under its own id: the checkpoint name, a fingerprint of the
- * arguments, and the call's position among calls with the same name and arguments. Every
- * argument must have a stable fingerprint (a value type, a record, a collection or map of
- * those, or a Jackson-serializable object); otherwise the call is refused with
- * {@link dev.jamjet.runtime.instrument.CheckpointKeyException}.
+ * Each call is recorded under {@code name#n@fingerprint}: the checkpoint name, the call's
+ * position among calls with that name, and a fingerprint of the arguments. Replay matches by
+ * name and position, and refuses a call whose arguments differ from the recorded ones with
+ * {@link dev.jamjet.runtime.instrument.CheckpointNondeterminismException}. Compute values
+ * that change between runs (random ids, the time) inside a checkpoint so they replay too.
+ * </p>
+ * <p>
+ * Every argument must have a stable fingerprint: a value type, a record, a collection or
+ * map of those, or an object with its own {@code equals} and {@code hashCode}. A client,
+ * a session or a lambda passed as an argument is refused with
+ * {@link dev.jamjet.runtime.instrument.CheckpointKeyException}; keep such objects in fields,
+ * or call {@code DurabilityContext.replayOrExecute} with your own id.
+ * </p>
+ * <p>
+ * A thrown {@link Exception} is recorded and replayed. An {@link Error} or an interrupt is not
+ * recorded; a replay runs the call again.
  * </p>
  */
 @Target(ElementType.METHOD)
