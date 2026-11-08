@@ -33,9 +33,9 @@ import static org.springframework.http.HttpMethod.GET;
 import static org.springframework.http.HttpMethod.POST;
 
 /**
- * The approval endpoint forwards the caller's own token to the engine, refuses a request
- * without one, and refuses an approval that does not echo the reviewed digest. The engine is
- * a WireMock stub with exact paths.
+ * The approval endpoint serves authenticated users only, acts at the engine with each
+ * user's configured token, and refuses an approval that does not echo the reviewed digest.
+ * The engine is a WireMock stub with exact paths.
  */
 class JamjetApprovalEndpointTest {
 
@@ -46,9 +46,15 @@ class JamjetApprovalEndpointTest {
     void up() {
         wm = new WireMockServer(options().dynamicPort());
         wm.start();
+        // an engine with auth on: an anonymous request is refused
+        wm.stubFor(get(urlEqualTo("/executions?limit=1")).willReturn(aResponse().withStatus(401)));
         JamjetEngineClient engine = new JamjetEngineClient(wm.baseUrl(), "app-token", "t1");
-        mvc = MockMvcBuilders.standaloneSetup(new JamjetApprovalController(engine)).build();
+        mvc = MockMvcBuilders.standaloneSetup(new JamjetApprovalController(engine, TOKENS)).build();
     }
+
+    static final ApproverTokenResolver TOKENS =
+            ApproverTokenResolver.fromMap(java.util.Map.of("alice", "alice-engine-token"));
+    static final java.security.Principal ALICE = () -> "alice";
 
     @AfterEach
     void down() {
@@ -56,44 +62,42 @@ class JamjetApprovalEndpointTest {
     }
 
     @Test
-    void withoutTheCallersTokenNothingReachesTheEngine() throws Exception {
+    void withoutAnAuthenticatedUserNothingReachesTheEngine() throws Exception {
         mvc.perform(request(GET, "/jamjet/executions/ex_1/approvals")).andExpect(status().isUnauthorized());
         mvc.perform(request(POST, "/jamjet/executions/ex_1/approve").contentType(MediaType.APPLICATION_JSON)
+                        .header("Authorization", "Bearer alice-engine-token")
                         .content("{\"decision\":\"rejected\",\"node_id\":\"pay\"}"))
-                .andExpect(status().isUnauthorized());
-        mvc.perform(request(POST, "/jamjet/executions/ex_1/approve").header("Authorization", "Basic YWxpY2U=")
-                        .contentType(MediaType.APPLICATION_JSON).content("{\"decision\":\"rejected\"}"))
                 .andExpect(status().isUnauthorized());
 
         assertThat(wm.findAll(anyRequestedFor(anyUrl()))).isEmpty();
     }
 
     @Test
-    void listForwardsTheCallersTokenNotTheApps() throws Exception {
+    void listUsesTheUsersEngineTokenNotTheApps() throws Exception {
         wm.stubFor(get(urlEqualTo("/executions/ex_1/approvals")).willReturn(okJson("""
                 {"pending":[{"node_id":"pay","tool_name":"payments.charge","approver":"human",
                  "context":{"action_digest":"sha256:feed"},"sequence":7}],"decided":[]}""")));
 
-        mvc.perform(request(GET, "/jamjet/executions/ex_1/approvals").header("Authorization", "Bearer alice"))
+        mvc.perform(request(GET, "/jamjet/executions/ex_1/approvals").principal(ALICE))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.pending[0].node_id").value("pay"))
                 .andExpect(jsonPath("$.pending[0].context.action_digest").value("sha256:feed"));
 
         wm.verify(getRequestedFor(urlEqualTo("/executions/ex_1/approvals"))
-                .withHeader("Authorization", equalTo("Bearer alice"))
+                .withHeader("Authorization", equalTo("Bearer alice-engine-token"))
                 .withHeader("X-Tenant-Id", equalTo("t1")));
     }
 
     @Test
     void anApprovalWithoutTheReviewedDigestIsRefusedHere() throws Exception {
-        mvc.perform(request(POST, "/jamjet/executions/ex_1/approve").header("Authorization", "Bearer alice")
+        mvc.perform(request(POST, "/jamjet/executions/ex_1/approve").principal(ALICE)
                         .contentType(MediaType.APPLICATION_JSON).content("{\"decision\":\"approved\",\"node_id\":\"pay\"}"))
                 .andExpect(status().isBadRequest());
-        mvc.perform(request(POST, "/jamjet/executions/ex_1/approve").header("Authorization", "Bearer alice")
+        mvc.perform(request(POST, "/jamjet/executions/ex_1/approve").principal(ALICE)
                         .contentType(MediaType.APPLICATION_JSON).content("{\"decision\":\"maybe\",\"node_id\":\"pay\"}"))
                 .andExpect(status().isBadRequest());
 
-        assertThat(wm.findAll(anyRequestedFor(anyUrl()))).isEmpty();
+        assertThat(wm.findAll(postRequestedFor(anyUrl()))).isEmpty();
     }
 
     @Test
@@ -101,7 +105,7 @@ class JamjetApprovalEndpointTest {
         wm.stubFor(post(urlEqualTo("/executions/ex_1/approve")).willReturn(okJson(
                 "{\"execution_id\":\"ex_1\",\"node_id\":\"pay\",\"accepted\":true}")));
 
-        mvc.perform(request(POST, "/jamjet/executions/ex_1/approve").header("Authorization", "Bearer alice")
+        mvc.perform(request(POST, "/jamjet/executions/ex_1/approve").principal(ALICE)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"decision\":\"approved\",\"node_id\":\"pay\",\"action_digest\":\"sha256:feed\","
                                 + "\"comment\":\"ok\"}"))
@@ -110,7 +114,7 @@ class JamjetApprovalEndpointTest {
                 .andExpect(jsonPath("$.node_id").value("pay"));
 
         wm.verify(postRequestedFor(urlEqualTo("/executions/ex_1/approve"))
-                .withHeader("Authorization", equalTo("Bearer alice"))
+                .withHeader("Authorization", equalTo("Bearer alice-engine-token"))
                 .withRequestBody(equalToJson(
                         "{\"decision\":\"approved\",\"node_id\":\"pay\",\"action_digest\":\"sha256:feed\",\"comment\":\"ok\"}")));
     }
@@ -121,7 +125,7 @@ class JamjetApprovalEndpointTest {
                 .withHeader("Content-Type", "application/json")
                 .withBody("{\"error\":\"action_digest does not match the pending request\"}")));
 
-        mvc.perform(request(POST, "/jamjet/executions/ex_1/approve").header("Authorization", "Bearer alice")
+        mvc.perform(request(POST, "/jamjet/executions/ex_1/approve").principal(ALICE)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"decision\":\"approved\",\"node_id\":\"pay\",\"action_digest\":\"sha256:old\"}"))
                 .andExpect(status().isConflict())
@@ -129,11 +133,11 @@ class JamjetApprovalEndpointTest {
     }
 
     @Test
-    void anUnreachableEngineIsABadGateway() throws Exception {
+    void anUnreachableEngineIsRefusedNotTrusted() throws Exception {
         JamjetEngineClient down = new JamjetEngineClient("http://127.0.0.1:1");
-        MockMvc offline = MockMvcBuilders.standaloneSetup(new JamjetApprovalController(down)).build();
-        offline.perform(request(GET, "/jamjet/executions/ex_1/approvals").header("Authorization", "Bearer alice"))
-                .andExpect(status().isBadGateway());
+        MockMvc offline = MockMvcBuilders.standaloneSetup(new JamjetApprovalController(down, TOKENS)).build();
+        offline.perform(request(GET, "/jamjet/executions/ex_1/approvals").principal(ALICE))
+                .andExpect(status().isServiceUnavailable());
     }
 
     // -- auto-configuration -------------------------------------------------------

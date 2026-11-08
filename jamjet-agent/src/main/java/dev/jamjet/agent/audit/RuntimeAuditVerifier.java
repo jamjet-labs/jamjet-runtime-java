@@ -63,6 +63,28 @@ import java.util.regex.Pattern;
  * <p>Signatures are checked strictly, as the runtime's {@code verify_strict} does: a key or
  * an {@code R} of small order or with a non-canonical encoding, and an {@code S} not below
  * the group order, are refused before the JDK's Ed25519 check runs.</p>
+ *
+ * <p><strong>What a verified entry proves, and what it does not.</strong></p>
+ * <ul>
+ *   <li>The hash joins its text fields with 0x1f and no lengths, so a 0x1f inside a field
+ *       could move a boundary without changing the hash. Every hashed text field holding
+ *       U+001F is refused, as is an {@code actor_type} other than {@code human},
+ *       {@code agent} or {@code system} and an integer not in canonical form.</li>
+ *   <li>Only the hashed fields are covered: {@code id}, {@code event_id},
+ *       {@code execution_id}, {@code sequence}, {@code event_type}, {@code actor_id},
+ *       {@code actor_type}, {@code tool_call_hash}, {@code policy_decision},
+ *       {@code http_request_id}, {@code http_method}, {@code http_path},
+ *       {@code ip_address}, {@code created_at}, {@code raw_event}, {@code tenant_id},
+ *       {@code expires_at}, {@code redacted} and {@code prev_hash}. Any other member of an
+ *       entry rides along unverified: read only those fields from a verified entry.</li>
+ *   <li>Some spellings hash the same and are accepted: a timestamp ending {@code Z} or
+ *       {@code +00:00}; a missing {@code tenant_id} or {@code "default"}; an optional text
+ *       field missing, {@code null} or {@code ""}.</li>
+ *   <li>A list verifies on its own terms only. Entries cut from its start or end, or an
+ *       empty list, still verify. To detect truncation, compare the first entry's
+ *       {@code prev_hash} and the last entry's {@code entry_hash} (or a count) with values
+ *       you recorded out of band.</li>
+ * </ul>
  */
 public final class RuntimeAuditVerifier {
 
@@ -88,6 +110,8 @@ public final class RuntimeAuditVerifier {
     private static final Pattern INTEGER = Pattern.compile("-?[0-9]+");
     /** DER SubjectPublicKeyInfo header for a raw 32-byte Ed25519 key (RFC 8410). */
     private static final byte[] ED25519_SPKI_PREFIX = HexFormat.of().parseHex("302a300506032b6570032100");
+    /** {@code ActorType} in {@code runtime/audit/src/entry.rs}, as {@code as_str} writes it. */
+    private static final Set<String> ACTOR_TYPES = Set.of("human", "agent", "system");
     private static final List<String> OPTIONAL_TEXT = List.of(
             "tool_call_hash", "policy_decision", "http_request_id", "http_method", "http_path", "ip_address");
     private static final JsonFactory JSON = JsonFactory.builder()
@@ -193,29 +217,33 @@ public final class RuntimeAuditVerifier {
         MessageDigest h = sha256();
         field(h, uuid(entry, "id"));
         field(h, uuid(entry, "event_id"));
-        field(h, utf8(text(entry, "execution_id", false)));
+        field(h, utf8(hashed("execution_id", text(entry, "execution_id", false))));
         field(h, ByteBuffer.allocate(8).order(java.nio.ByteOrder.LITTLE_ENDIAN).putLong(i64(entry, "sequence")).array());
-        field(h, utf8(text(entry, "event_type", false)));
-        field(h, utf8(text(entry, "actor_id", false)));
-        field(h, utf8(text(entry, "actor_type", false)));
-        for (String key : OPTIONAL_TEXT) {
-            field(h, utf8(text(entry, key, true)));
+        field(h, utf8(hashed("event_type", text(entry, "event_type", false))));
+        field(h, utf8(hashed("actor_id", text(entry, "actor_id", false))));
+        String actorType = text(entry, "actor_type", false);
+        if (!ACTOR_TYPES.contains(actorType)) {
+            throw new IllegalArgumentException("actor_type is not one the runtime writes (human, agent, system)");
         }
-        field(h, utf8(rfc3339(text(entry, "created_at", false))));
+        field(h, utf8(actorType));
+        for (String key : OPTIONAL_TEXT) {
+            field(h, utf8(hashed(key, text(entry, key, true))));
+        }
+        field(h, utf8(rfc3339(hashed("created_at", text(entry, "created_at", false)))));
         if (!entry.containsKey("raw_event")) {
             throw new IllegalArgumentException("raw_event is missing");
         }
         field(h, utf8(serdeJson(entry.get("raw_event"))));
         // Rust defaults a missing tenant_id to "default"; a null is not a string.
-        field(h, utf8(entry.containsKey("tenant_id") ? text(entry, "tenant_id", false) : "default"));
-        String expires = text(entry, "expires_at", true);
+        field(h, utf8(entry.containsKey("tenant_id") ? hashed("tenant_id", text(entry, "tenant_id", false)) : "default"));
+        String expires = hashed("expires_at", text(entry, "expires_at", true));
         field(h, utf8(expires.isEmpty() ? "" : rfc3339(expires)));
         Object redacted = entry.containsKey("redacted") ? entry.get("redacted") : Boolean.FALSE;
         if (!(redacted instanceof Boolean flag)) {
             throw new IllegalArgumentException("redacted is not a boolean");
         }
         field(h, new byte[]{(byte) (flag ? 1 : 0)});
-        field(h, utf8(prevHash == null ? "" : prevHash));
+        field(h, utf8(prevHash == null ? "" : hashed("prev_hash", prevHash)));
         return HexFormat.of().formatHex(h.digest());
     }
 
@@ -241,6 +269,28 @@ public final class RuntimeAuditVerifier {
     }
 
     /**
+     * As {@link #verifyEntries(List, byte[], boolean)}, accepting a signature by any of
+     * {@code trustedKeys} (for a log that spans a key rotation). Each entry's key is chosen by
+     * the {@code kid} in its signature; a {@code kid} matching none of them is
+     * {@code WRONG_KEY}.
+     *
+     * @throws IllegalArgumentException when {@code trustedKeys} is empty or holds an unusable key
+     */
+    public static void verifyEntries(List<? extends Map<String, Object>> entries,
+                                     java.util.Collection<byte[]> trustedKeys, boolean linked)
+            throws AuditChainException {
+        if (trustedKeys == null || trustedKeys.isEmpty()) {
+            throw new IllegalArgumentException("no trusted keys");
+        }
+        Map<String, PublicKey> keys = new LinkedHashMap<>();
+        for (byte[] k : trustedKeys) {
+            checkPublicKey(k);
+            keys.put(keyId(k), jdkKey(k));
+        }
+        verify(entries, keys, linked);
+    }
+
+    /**
      * Verifies every entry's hash and Ed25519 signature, and throws at the first failure.
      *
      * @param linked also check that each entry's {@code prev_hash} is the previous entry's
@@ -252,8 +302,11 @@ public final class RuntimeAuditVerifier {
     public static void verifyEntries(List<? extends Map<String, Object>> entries, byte[] publicKey,
                                      boolean linked) throws AuditChainException {
         checkPublicKey(publicKey);
-        PublicKey key = jdkKey(publicKey);
-        String kid = keyId(publicKey);
+        verify(entries, Map.of(keyId(publicKey), jdkKey(publicKey)), linked);
+    }
+
+    private static void verify(List<? extends Map<String, Object>> entries, Map<String, PublicKey> keys,
+                               boolean linked) throws AuditChainException {
         Object prev = null;
         for (int index = 0; index < entries.size(); index++) {
             Map<String, Object> entry = entries.get(index);
@@ -283,7 +336,7 @@ public final class RuntimeAuditVerifier {
             if (!recomputed.equals(entryHash)) {
                 throw new AuditChainException(index, AuditChainException.Reason.HASH_MISMATCH, "");
             }
-            AuditChainException.Reason reason = checkSignature(key, kid, (String) entryHash, (String) signature);
+            AuditChainException.Reason reason = checkSignature(keys, (String) entryHash, (String) signature);
             if (reason != null) {
                 throw new AuditChainException(index, reason, "");
             }
@@ -367,7 +420,7 @@ public final class RuntimeAuditVerifier {
     // Signature
     // -------------------------------------------------------------------------
 
-    private static AuditChainException.Reason checkSignature(PublicKey key, String kid, String entryHash,
+    private static AuditChainException.Reason checkSignature(Map<String, PublicKey> keys, String entryHash,
                                                              String signature) {
         if (!signature.startsWith(SIG_PREFIX)) {
             return AuditChainException.Reason.BAD_SIGNATURE;
@@ -376,7 +429,9 @@ public final class RuntimeAuditVerifier {
         if (parts.length != 2) {
             return AuditChainException.Reason.BAD_SIGNATURE;
         }
-        if (!parts[0].equals(kid)) {
+        String kid = parts[0];
+        PublicKey key = keys.get(kid);
+        if (key == null) {
             return AuditChainException.Reason.WRONG_KEY;
         }
         if (!HEX128.matcher(parts[1]).matches()) {
@@ -466,6 +521,10 @@ public final class RuntimeAuditVerifier {
         BigInteger n;
         if (v instanceof JsonNumberText num && INTEGER.matcher(num.text()).matches()) {
             n = new BigInteger(num.text());
+            if (!n.toString().equals(num.text())) {
+                // "-0" or leading zeros: Rust writes neither
+                throw new IllegalArgumentException(key + " is not a canonical integer");
+            }
         } else if (v instanceof Integer || v instanceof Long) {
             n = BigInteger.valueOf(((Number) v).longValue());
         } else if (v instanceof BigInteger big) {
@@ -492,6 +551,14 @@ public final class RuntimeAuditVerifier {
             throw new IllegalArgumentException(key + " is not a string");
         }
         return s;
+    }
+
+    /** A text field that goes into the hash: it may not hold the 0x1f field separator. */
+    private static String hashed(String key, String value) {
+        if (value.indexOf('\u001f') >= 0) {
+            throw new IllegalArgumentException(key + " holds U+001F, the hash's field separator");
+        }
+        return value;
     }
 
     /** The hash covers chrono's {@code to_rfc3339()}, which writes UTC as {@code +00:00}. */

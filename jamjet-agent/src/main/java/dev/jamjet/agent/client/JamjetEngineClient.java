@@ -124,13 +124,13 @@ public final class JamjetEngineClient implements AutoCloseable {
 
     /** {@code GET /executions/{id}} — the current execution snapshot for polling. */
     public ExecutionState getExecution(String executionId) {
-        return getJson("/executions/" + executionId, ExecutionState.class);
+        return getJson("/executions/" + seg(executionId), ExecutionState.class);
     }
 
     /** {@code GET /executions/{id}/events} — the event stream (response {@code {"events": [...]}}). */
     @SuppressWarnings("unchecked")
     public List<Map<String, Object>> listEvents(String executionId) {
-        String body = execute(buildGet("/executions/" + executionId + "/events"));
+        String body = execute(buildGet("/executions/" + seg(executionId) + "/events"));
         Map<String, Object> resp = (Map<String, Object>) parse(body, Map.class);
         if (resp == null) {
             return List.of();
@@ -146,7 +146,7 @@ public final class JamjetEngineClient implements AutoCloseable {
 
     /** {@code GET /executions/{id}/approvals}: pending and decided approvals. */
     public ApprovalList listApprovals(String executionId) {
-        ApprovalList list = getJson("/executions/" + executionId + "/approvals", ApprovalList.class);
+        ApprovalList list = getJson("/executions/" + seg(executionId) + "/approvals", ApprovalList.class);
         return list == null ? new ApprovalList(List.of(), List.of()) : list;
     }
 
@@ -194,7 +194,7 @@ public final class JamjetEngineClient implements AutoCloseable {
         if (comment != null) {
             body.put("comment", comment);
         }
-        return postJson("/executions/" + executionId + "/approve", body, ApprovalResult.class);
+        return postJson("/executions/" + seg(executionId) + "/approve", body, ApprovalResult.class);
     }
 
     /** {@code POST /executions/{id}/external-event}. Body {@code {correlation_key, payload}}. */
@@ -202,7 +202,7 @@ public final class JamjetEngineClient implements AutoCloseable {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("correlation_key", correlationKey);
         body.put("payload", payload == null ? Map.of() : payload);
-        execute(buildPost("/executions/" + executionId + "/external-event", body));
+        execute(buildPost("/executions/" + seg(executionId) + "/external-event", body));
     }
 
     // -- Audit -------------------------------------------------------------------
@@ -310,7 +310,7 @@ public final class JamjetEngineClient implements AutoCloseable {
         if (idempotencyKey != null) {
             body.put("idempotency_key", idempotencyKey);
         }
-        execute(buildPost("/work-items/" + itemId + "/complete", body));
+        execute(buildPost("/work-items/" + seg(itemId) + "/complete", body));
     }
 
     /**
@@ -344,7 +344,7 @@ public final class JamjetEngineClient implements AutoCloseable {
         if (leaseFence != null) {
             body.put("lease_fence", leaseFence);
         }
-        execute(buildPost("/work-items/" + itemId + "/fail", body));
+        execute(buildPost("/work-items/" + seg(itemId) + "/fail", body));
     }
 
     /**
@@ -362,10 +362,66 @@ public final class JamjetEngineClient implements AutoCloseable {
         if (leaseFence != null) {
             body.put("lease_fence", leaseFence);
         }
-        execute(buildPost("/work-items/" + itemId + "/heartbeat", body));
+        execute(buildPost("/work-items/" + seg(itemId) + "/heartbeat", body));
+    }
+
+    // -- Engine mode --------------------------------------------------------------
+
+    /**
+     * Whether the engine refuses an unauthenticated request: an anonymous
+     * {@code GET /executions?limit=1} answered 401 or 403. An engine in dev mode answers 2xx;
+     * then every caller is anonymous and an approval records whatever name the body gives.
+     *
+     * @throws JamjetHttpException when the engine cannot be reached or answers anything else
+     */
+    public boolean requiresAuthentication() {
+        HttpRequest request = HttpRequest.newBuilder(uri("/executions?limit=1"))
+                .timeout(REQUEST_TIMEOUT)
+                .header("Accept", "application/json")
+                .GET()
+                .build();
+        HttpResponse<String> resp;
+        try {
+            resp = http.send(request, HttpResponse.BodyHandlers.ofString());
+        } catch (IOException e) {
+            throw new JamjetHttpException("HTTP request failed: " + request.uri(), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new JamjetHttpException("HTTP request interrupted: " + request.uri(), e);
+        }
+        int status = resp.statusCode();
+        if (status == 401 || status == 403) {
+            return true;
+        }
+        if (status >= 200 && status < 300) {
+            return false;
+        }
+        throw new JamjetHttpException(status, resp.body());
     }
 
     // -- Internal HTTP plumbing -------------------------------------------------
+
+    /**
+     * One path segment, percent-encoded (RFC 3986: only unreserved characters stay as they
+     * are), so an id cannot add segments, a query or a fragment.
+     */
+    static String seg(String value) {
+        if (value == null || value.isEmpty() || value.equals(".") || value.equals("..")) {
+            throw new IllegalArgumentException("not a usable path segment: " + value);
+        }
+        StringBuilder out = new StringBuilder();
+        for (byte b : value.getBytes(java.nio.charset.StandardCharsets.UTF_8)) {
+            int c = b & 0xff;
+            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+                    || c == '-' || c == '.' || c == '_' || c == '~') {
+                out.append((char) c);
+            } else {
+                out.append('%').append(Character.toUpperCase(Character.forDigit(c >> 4, 16)))
+                        .append(Character.toUpperCase(Character.forDigit(c & 0xf, 16)));
+            }
+        }
+        return out.toString();
+    }
 
     private <T> T postJson(String path, Object body, Class<T> type) {
         return parse(execute(buildPost(path, body)), type);

@@ -24,10 +24,24 @@ import org.springframework.context.annotation.Bean;
 @ConditionalOnProperty(prefix = "jamjet.agent.approvals.endpoint", name = "enabled", havingValue = "true")
 public class JamjetApprovalEndpointAutoConfiguration {
 
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(JamjetApprovalEndpointAutoConfiguration.class);
+
+    @Bean
+    @ConditionalOnMissingBean
+    public ApproverTokenResolver jamjetApproverTokenResolver(JamjetAgentProperties properties) {
+        var tokens = properties.getApprovals().getEndpoint().getApproverTokens();
+        if (tokens.isEmpty()) {
+            log.warn("JamJet approvals endpoint is enabled but no approver tokens are configured "
+                    + "(jamjet.agent.approvals.endpoint.approver-tokens.<user>); every request will be refused");
+        }
+        return ApproverTokenResolver.fromMap(tokens);
+    }
+
     @Bean
     @ConditionalOnMissingBean
     @ConditionalOnBean(JamjetEngineClient.class)
-    public JamjetApprovalController jamjetApprovalController(JamjetEngineClient engine) {
-        return new JamjetApprovalController(engine);
+    public JamjetApprovalController jamjetApprovalController(JamjetEngineClient engine, ApproverTokenResolver tokens) {
+        return new JamjetApprovalController(engine, tokens);
     }
 }

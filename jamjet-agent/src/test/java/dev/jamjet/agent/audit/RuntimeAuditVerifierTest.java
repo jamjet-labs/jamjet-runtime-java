@@ -418,4 +418,24 @@ class RuntimeAuditVerifierTest {
         System.arraycopy(sPlusL, 0, malleable, 32, 32);
         assertThat(jdkAccepts(v.publicKey(), msg, malleable)).as("JDK alone: S + L").isFalse();
     }
+
+    @Test
+    void theScalarBackstopRefusesSAtAndAboveTheGroupOrder() {
+        assertThat(RuntimeAuditVerifier.canonicalScalar(toLe32(L.subtract(BigInteger.ONE)))).isTrue();
+        assertThat(RuntimeAuditVerifier.canonicalScalar(toLe32(L))).isFalse();
+        assertThat(RuntimeAuditVerifier.canonicalScalar(toLe32(L.add(BigInteger.ONE)))).isFalse();
+        assertThat(RuntimeAuditVerifier.canonicalScalar(new byte[32])).isTrue();
+    }
+
+    @Test
+    void aKeySetVerifiesALogAcrossARotation() throws Exception {
+        Vector v = vector();
+        byte[] other = freshPublicKey();
+        RuntimeAuditVerifier.verifyEntries(v.entries(), List.of(other, v.publicKey()), true);
+        AuditChainException e = catchThrowableOfType(
+                () -> RuntimeAuditVerifier.verifyEntries(v.entries(), List.of(other), true), AuditChainException.class);
+        assertThat(e.reason()).isEqualTo(AuditChainException.Reason.WRONG_KEY);
+        assertThatThrownBy(() -> RuntimeAuditVerifier.verifyEntries(v.entries(), List.<byte[]>of(), true))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 }

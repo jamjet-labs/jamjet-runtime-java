@@ -89,8 +89,8 @@ public class JamjetAgentProperties {
 
         /**
          * {@code GET {path}/executions/{id}/approvals} and
-         * {@code POST {path}/executions/{id}/approve}, forwarded to the engine with the
-         * caller's own bearer token. Off unless enabled.
+         * {@code POST {path}/executions/{id}/approve}, for authenticated users, acting at the
+         * engine with each user's configured token. Off unless enabled.
          */
         public static class Endpoint {
 
@@ -99,6 +99,20 @@ public class JamjetAgentProperties {
 
             /** Path prefix for the endpoint. */
             private String path = "/jamjet";
+
+            /**
+             * Engine token per authenticated user name, used to act at the engine for that
+             * user. Each person needs their own token, not the application's.
+             */
+            private java.util.Map<String, String> approverTokens = new java.util.LinkedHashMap<>();
+
+            public java.util.Map<String, String> getApproverTokens() {
+                return approverTokens;
+            }
+
+            public void setApproverTokens(java.util.Map<String, String> approverTokens) {
+                this.approverTokens = approverTokens;
+            }
 
             public boolean isEnabled() {
                 return enabled;

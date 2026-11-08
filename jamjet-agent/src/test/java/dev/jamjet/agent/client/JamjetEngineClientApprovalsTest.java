@@ -148,4 +148,13 @@ class JamjetEngineClientApprovalsTest {
         // returned as written: the number keeps its spelling
         assertThat(audit).contains("1e+16");
     }
+
+    @Test
+    void anExecutionIdIsSentAsOnePathSegment() {
+        wm.stubFor(get(urlEqualTo("/executions/ex%201/approvals")).willReturn(okJson("{\"pending\":[],\"decided\":[]}")));
+
+        new JamjetEngineClient(wm.baseUrl()).listApprovals("ex 1");
+
+        wm.verify(getRequestedFor(urlEqualTo("/executions/ex%201/approvals")));
+    }
 }
