@@ -16,13 +16,18 @@ some event records gain components.
 - **Instrument (#16):** `@Checkpoint` under the `-javaagent` threw `IllegalAccessError` for
   every class outside `dev.jamjet.runtime.instrument`. It now works from any package.
   - A replayed call is matched by checkpoint name and position. If its arguments differ
-    from the recorded call, it throws `CheckpointNondeterminismException`: it neither returns
-    another call's result nor runs the side effect again.
+    from the recorded call, or the position has no record while later ones do, it throws
+    `CheckpointNondeterminismException`. That is an `Error`, so a `catch (Exception)` retry
+    loop does not swallow it, and the context then refuses every later checkpoint call. It
+    neither returns another call's result nor runs the side effect again.
   - A call that threw an `Exception` is recorded and replays as the same failure. A failure
-    restored from storage is rebuilt as its original class when it can be. An `Error` or an
-    interrupt is not recorded.
-  - Arguments without a stable fingerprint (a client, a session, a lambda) are refused with
-    `CheckpointKeyException`.
+    restored from storage is rebuilt as exactly its original class, or else thrown as
+    `CheckpointReplayException`, never as a superclass.
+  - An `Error` or an interrupt is recorded as an indeterminate marker. Replay throws it again
+    where the first run went past it, and runs the call again where the run stopped.
+  - Arguments are fingerprinted without calling their methods: records and value objects by
+    their fields, JDK types from a fixed allow-list. Anything else (a client, a session, a
+    lambda, another JDK type) is refused with `CheckpointKeyException`.
 - **Core (#17):** event logs written by the current Rust runtime now load. The kinds Java was
   missing are added: `node_parked`, `agent_step_admitted`, `approval_expired`,
   `approval_escalated`, `audit_seal_failed`, `run_stalled` and `segment_boundary`. Before, any
@@ -53,7 +58,9 @@ some event records gain components.
 - **Agent starter (#18):** an opt-in approval endpoint
   (`jamjet.agent.approvals.endpoint.enabled`).
   - It serves only authenticated users, and acts at the engine with each user's configured
-    token (`approver-tokens`). It never forwards the caller's bearer token.
+    token (`approvers[n].user` / `approvers[n].token`). It never forwards the caller's
+    bearer token.
+  - A decision needs the `X-JamJet-Approval` header.
   - It refuses to relay decisions to an engine that runs without authentication.
 
 ### Changed
@@ -77,8 +84,9 @@ some event records gain components.
   (`Class.method` or the bare `@Checkpoint` value) are not read as `@Checkpoint` records. In
   0.4.0 the agent path failed for every class outside the instrument package, so such records
   should not exist. Ids passed to `DurabilityContext.replayOrExecute` are unchanged.
-- To persist a run, save each `CheckpointRecord`'s `id`, `failed` flag, and either `value` or
-  `failureType` and `failureMessage`. Load them with `DurabilityContext.restore`.
+- To persist a run, save each `CheckpointRecord`'s `id`, `failed` and `indeterminate` flags,
+  and either `value` or `failureType` and `failureMessage`. Load them with
+  `DurabilityContext.restore`.
 
 ## 0.4.0
 
