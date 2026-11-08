@@ -96,17 +96,27 @@ class CheckpointInterceptorTest {
 
         assertThat(result).isEqualTo("result");
         assertThat(CALL_COUNT.get()).isEqualTo(1);
-        assertThat(ctx.getRecordedResult("compute")).isEqualTo("result");
+        assertThat(ctx.getRecords()).singleElement().satisfies(r -> {
+            assertThat(r.id()).startsWith("compute#0@");
+            assertThat(r.failed()).isFalse();
+            assertThat(r.value()).isEqualTo("result");
+        });
     }
 
     @Test
     void withContextInReplayMode_storedResultReturnedWithoutCallingBody() throws Exception {
         instrument();
 
+        DurabilityContext recording = DurabilityContext.create();
+        DurabilityContext.setCurrent(recording);
+        new SampleAgent().compute();
+        String id = recording.getCheckpointIds().get(0);
+
         DurabilityContext ctx = DurabilityContext.create();
-        ctx.recordResult("compute", "replayed-result");
+        ctx.recordResult(id, "replayed-result");
         ctx.setReplayMode(true);
         DurabilityContext.setCurrent(ctx);
+        CALL_COUNT.set(0);
 
         SampleAgent agent = new SampleAgent();
         String result = agent.compute();

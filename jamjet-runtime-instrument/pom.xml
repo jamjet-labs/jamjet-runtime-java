@@ -74,6 +74,25 @@
                     </archive>
                 </configuration>
             </plugin>
+            <!-- *IT tests run after package with the real javaagent attached, so the
+                 instrumented classes are transformed by premain exactly as in an
+                 application. Unit tests stay on surefire with ByteBuddyAgent.install(). -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <version>3.5.2</version>
+                <configuration>
+                    <argLine>-javaagent:${project.build.directory}/${project.build.finalName}.jar</argLine>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
 </project>

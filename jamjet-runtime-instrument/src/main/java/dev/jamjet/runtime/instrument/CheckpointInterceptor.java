@@ -11,98 +11,51 @@ import java.lang.reflect.Method;
  * annotated with {@link Checkpoint}.
  *
  * <p>On method entry, the interceptor checks whether a {@link DurabilityContext} is active
- * and holds a cached result for this checkpoint. If so, the method body is skipped and
- * the cached value is returned. On method exit, the return value is recorded into the
- * active context (when one is present).</p>
+ * and holds a recorded outcome for this call. If it holds a value, the method body is
+ * skipped and the value is returned; if it holds a failure, the failure is thrown again.
+ * Otherwise the body runs and its outcome, a value or a thrown exception, is recorded
+ * on exit.</p>
  *
- * <p>Checkpoint ID resolution: uses {@link Checkpoint#value()} when non-empty; otherwise
- * falls back to {@code ClassName.methodName}.</p>
+ * <p>Checkpoint ids are built by {@link CheckpointRuntime}: the checkpoint name, a
+ * fingerprint of the arguments, and the call's position among calls with the same name
+ * and arguments.</p>
  *
- * <p><strong>ByteBuddy constraints:</strong> All {@code @Advice} methods must be {@code static}.
- * The {@code skipOn = Advice.OnNonDefaultValue.class} parameter in
- * {@link Advice.OnMethodEnter} causes the method body to be skipped when the enter method
- * returns a non-null value. The cached result is stored in a thread-local so the exit
- * advice can use it to override the return value.</p>
+ * <p><strong>ByteBuddy constraints:</strong> the advice code is copied into the
+ * instrumented class, which can be in any package, so it may only reference public
+ * members. All logic lives in {@link CheckpointRuntime}. The body is skipped when the
+ * enter advice returns a {@link CheckpointRuntime.Replayed}.</p>
  */
 public final class CheckpointInterceptor {
 
-    /**
-     * Thread-local that carries the cached value from enter to exit when the method body
-     * is being skipped. Cleared by the exit advice immediately after use.
-     */
-    static final ThreadLocal<Object> SKIP_VALUE = new ThreadLocal<>();
-
     private CheckpointInterceptor() {}
-
-    // -------------------------------------------------------------------------
-    // Advice: enter
-    // -------------------------------------------------------------------------
 
     /**
      * Called before the instrumented method body.
      *
-     * @param method    the intercepted method (injected by ByteBuddy)
-     * @return non-null when the method body should be skipped (cached result exists
-     *         in replay mode), {@code null} otherwise
+     * @param method the intercepted method (injected by ByteBuddy)
+     * @param args   the call's arguments (injected by ByteBuddy)
+     * @return a {@link CheckpointRuntime.Replayed} to skip the body, otherwise a value
+     *         handed to {@link #onExit}
      */
-    @Advice.OnMethodEnter(skipOn = Advice.OnNonDefaultValue.class)
-    public static Object onEnter(@Advice.Origin Method method) {
-        DurabilityContext ctx = DurabilityContext.current();
-        if (ctx == null) {
-            return null;
-        }
-        String checkpointId = resolveCheckpointId(method);
-        if (ctx.isReplayMode() && ctx.getCheckpointIds().contains(checkpointId)) {
-            Object cached = ctx.getRecordedResult(checkpointId);
-            SKIP_VALUE.set(cached);
-            // return non-null sentinel to trigger skipOn
-            return Boolean.TRUE;
-        }
-        return null;
+    @Advice.OnMethodEnter(skipOn = CheckpointRuntime.Replayed.class)
+    public static Object onEnter(
+            @Advice.Origin Method method,
+            @Advice.AllArguments Object[] args) {
+        return CheckpointRuntime.enter(method, args);
     }
 
-    // -------------------------------------------------------------------------
-    // Advice: exit
-    // -------------------------------------------------------------------------
-
     /**
-     * Called after the instrumented method body (or after the skip).
+     * Called after the instrumented method body, after a throw, or after the skip.
      *
-     * @param method    the intercepted method (injected by ByteBuddy)
-     * @param returned  the value returned by the method body (writable)
-     * @param skipped   the value returned by the enter advice ({@code null} means normal exit)
+     * @param entered  the value returned by {@link #onEnter}
+     * @param returned the value returned by the method body (writable)
+     * @param thrown   the exception the body threw, or {@code null}
      */
     @Advice.OnMethodExit(onThrowable = Throwable.class)
     public static void onExit(
-            @Advice.Origin Method method,
+            @Advice.Enter Object entered,
             @Advice.Return(readOnly = false, typing = Assigner.Typing.DYNAMIC) Object returned,
-            @Advice.Enter Object skipped) {
-
-        if (skipped != null) {
-            // method was skipped — restore the cached value as the return value
-            Object cached = SKIP_VALUE.get();
-            SKIP_VALUE.remove();
-            returned = cached;
-            return;
-        }
-
-        // normal execution path — record the result
-        DurabilityContext ctx = DurabilityContext.current();
-        if (ctx != null) {
-            String checkpointId = resolveCheckpointId(method);
-            ctx.recordResult(checkpointId, returned);
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // Helpers
-    // -------------------------------------------------------------------------
-
-    static String resolveCheckpointId(Method method) {
-        Checkpoint ann = method.getAnnotation(Checkpoint.class);
-        if (ann != null && !ann.value().isEmpty()) {
-            return ann.value();
-        }
-        return method.getDeclaringClass().getSimpleName() + "." + method.getName();
+            @Advice.Thrown Throwable thrown) {
+        returned = CheckpointRuntime.exit(entered, returned, thrown);
     }
 }
