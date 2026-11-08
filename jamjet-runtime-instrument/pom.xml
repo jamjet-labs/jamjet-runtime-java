@@ -28,12 +28,6 @@
             <version>${bytebuddy.version}</version>
         </dependency>
 
-        <!-- Jackson: finds a value object's properties for argument fingerprints (version from the BOM) -->
-        <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
-        </dependency>
-
         <!-- SLF4J -->
         <dependency>
             <groupId>org.slf4j</groupId>

@@ -9,17 +9,21 @@ import java.util.Objects;
  *
  * <p>{@code failure} holds the original exception when the record was made in this
  * process. A record restored from storage carries only {@code failureType} and
- * {@code failureMessage}; replaying it throws a new instance of {@code failureType} built
- * from the message when that class can be loaded and has a public {@code (String)},
- * {@code (String, Throwable)} or no-argument constructor. Otherwise it walks up to the
- * nearest superclass that can be built, so a {@code catch} of any of those supertypes still
- * matches. The rebuilt exception carries a suppressed {@link CheckpointReplayException}
- * naming the original type. If no class can be loaded, the replay throws
+ * {@code failureMessage}; replaying it throws a new instance of exactly {@code failureType}
+ * built from the message when that class can be loaded and has a public {@code (String)},
+ * {@code (String, Throwable)} or no-argument constructor, with a suppressed
+ * {@link CheckpointReplayException} naming it as replayed. Otherwise the replay throws
  * {@link CheckpointReplayException} itself.</p>
+ *
+ * <p>An {@code indeterminate} record marks a call that threw something that is not an outcome
+ * of the step (an {@link Error} or an interrupt). See {@link CheckpointRuntime} for how replay
+ * treats it.</p>
  *
  * @param id             the checkpoint id the outcome is stored under
  * @param value          the returned value (always {@code null} for a failure)
  * @param failed         {@code true} when the call threw
+ * @param indeterminate  {@code true} when what it threw is not an outcome of the step (an
+ *                       {@link Error} or an interrupt); always a failure record too
  * @param failure        the thrown exception, when still available in this process
  * @param failureType    class name of the thrown exception ({@code null} for a success)
  * @param failureMessage message of the thrown exception (may be {@code null})
@@ -28,6 +32,7 @@ public record CheckpointRecord(
         String id,
         Object value,
         boolean failed,
+        boolean indeterminate,
         Throwable failure,
         String failureType,
         String failureMessage
@@ -35,6 +40,9 @@ public record CheckpointRecord(
 
     public CheckpointRecord {
         Objects.requireNonNull(id, "id");
+        if (indeterminate && !failed) {
+            throw new IllegalArgumentException("an indeterminate marker is a failure record: " + id);
+        }
         if (failed) {
             if (value != null) {
                 throw new IllegalArgumentException("a failure record carries no value: " + id);
@@ -53,19 +61,34 @@ public record CheckpointRecord(
 
     /** A call that returned {@code value}. */
     public static CheckpointRecord success(String id, Object value) {
-        return new CheckpointRecord(id, value, false, null, null, null);
+        return new CheckpointRecord(id, value, false, false, null, null, null);
     }
 
     /** A call that threw {@code failure} in this process. */
     public static CheckpointRecord failure(String id, Throwable failure) {
         Objects.requireNonNull(failure, "failure");
-        return new CheckpointRecord(id, null, true, failure, null, null);
+        return new CheckpointRecord(id, null, true, false, failure, null, null);
     }
 
     /** A failure restored from storage, where only the exception's type and message survive. */
     public static CheckpointRecord failure(String id, String failureType, String failureMessage) {
         Objects.requireNonNull(failureType, "failureType");
-        return new CheckpointRecord(id, null, true, null, failureType, failureMessage);
+        return new CheckpointRecord(id, null, true, false, null, failureType, failureMessage);
+    }
+
+    /**
+     * A call that threw {@code thrown}, which is not an outcome of the step (an
+     * {@link Error} or an interrupt): its outcome is unknown.
+     */
+    public static CheckpointRecord indeterminate(String id, Throwable thrown) {
+        Objects.requireNonNull(thrown, "thrown");
+        return new CheckpointRecord(id, null, true, true, thrown, null, null);
+    }
+
+    /** An indeterminate marker restored from storage. */
+    public static CheckpointRecord indeterminate(String id, String failureType, String failureMessage) {
+        Objects.requireNonNull(failureType, "failureType");
+        return new CheckpointRecord(id, null, true, true, null, failureType, failureMessage);
     }
 
     /**
@@ -80,7 +103,7 @@ public record CheckpointRecord(
             return failure;
         }
         CheckpointReplayException marker = new CheckpointReplayException(id, failureType, failureMessage);
-        Throwable rebuilt = rebuild(failureType, failureMessage);
+        Throwable rebuilt = rebuild(failureType, failureMessage, indeterminate);
         if (rebuilt == null) {
             return marker;
         }
@@ -88,19 +111,19 @@ public record CheckpointRecord(
         return rebuilt;
     }
 
-    /** An instance of {@code type}, or of its nearest buildable superclass, or {@code null}. */
-    static Throwable rebuild(String type, String message) {
+    /**
+     * An instance of exactly {@code type} built from {@code message}, or {@code null}. A
+     * failure record must name an {@link Exception}; an indeterminate marker may name any
+     * {@link Throwable}. Never a superclass: rebuilding a {@code DeclinedException} as a plain
+     * {@code IOException} could send a {@code catch} down its retry branch.
+     */
+    static Throwable rebuild(String type, String message, boolean anyThrowable) {
         Class<?> c = load(type);
-        if (c == null || !Exception.class.isAssignableFrom(c)) {
+        Class<?> bound = anyThrowable ? Throwable.class : Exception.class;
+        if (c == null || !bound.isAssignableFrom(c)) {
             return null;
         }
-        for (Class<?> k = c; k != null && Exception.class.isAssignableFrom(k); k = k.getSuperclass()) {
-            Throwable t = construct(k, message);
-            if (t != null) {
-                return t;
-            }
-        }
-        return null;
+        return construct(c, message);
     }
 
     private static Class<?> load(String type) {

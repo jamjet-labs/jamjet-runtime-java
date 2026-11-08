@@ -1,23 +1,21 @@
 package dev.jamjet.runtime.instrument;
 
-import com.fasterxml.jackson.databind.BeanDescription;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
-import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
-import com.fasterxml.jackson.databind.json.JsonMapper;
-
 import java.lang.reflect.Array;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.RecordComponent;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.net.URI;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -27,23 +25,35 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Deterministic fingerprint of a call's arguments, used in checkpoint ids so that a call
- * with different arguments never replays another call's result.
+ * Deterministic fingerprint of a call's arguments, recorded with each checkpoint so that a
+ * replayed call with different arguments is caught.
  *
- * <p>Value types (strings, numbers, booleans, characters, enums, {@code java.time} values,
- * UUIDs, URIs), arrays, {@code Optional}, records, collections and maps are encoded
- * structurally. Sets and maps are encoded order-independently. Any other object must be a
- * value object (its own {@code equals} and {@code hashCode}); its readable properties are
- * encoded by the same rules, sorted by name. An argument that cannot be encoded (identity
- * semantics such as a client or a lambda, no readable properties, a cycle, nesting deeper
- * than {@value #MAX_DEPTH}) raises {@link CheckpointKeyException}.</p>
+ * <p>No method of an argument is called, apart from {@code toString} on a fixed list of JDK
+ * value types. Fingerprinting must not do I/O ({@code URL.getContent()}), trigger lazy
+ * loading, or read the environment.</p>
+ * <ul>
+ *   <li>JDK value types, by a fixed allow-list: {@code String}, {@code Boolean},
+ *       {@code Character}, the boxed numbers, {@code BigInteger}, {@code BigDecimal}, enums
+ *       (by name), {@code UUID}, {@code URI}, {@code URL} (its text, no network),
+ *       {@code java.time} values and {@code Class} (by name).</li>
+ *   <li>Arrays, {@code Optional}, and JDK collections and maps, element by element; sets and
+ *       maps independent of iteration order.</li>
+ *   <li>Records, by their component fields.</li>
+ *   <li>Your own value objects (a class with its own {@code equals} and {@code hashCode}), by
+ *       their instance fields (not static, not transient), read directly; getters are never
+ *       called.</li>
+ * </ul>
+ * <p>Anything else raises {@link CheckpointKeyException}: other JDK types (such as
+ * {@code Date} or {@code StringBuilder}), collection or map implementations outside the
+ * JDK, objects with identity semantics (a client, a session, a lambda), a cycle, or nesting
+ * deeper than {@value #MAX_DEPTH}.</p>
+ *
+ * <p>Caveat: a set is encoded sorted, but a {@code List} filled from a {@code HashSet}'s
+ * iteration can come out in another order in another run, and then fingerprints differ.</p>
  */
 final class ArgumentFingerprint {
 
     static final int MAX_DEPTH = 32;
-
-    /** Used only to find a value object's readable properties, as Jackson would. */
-    private static final ObjectMapper JSON = JsonMapper.builder().build();
 
     private ArgumentFingerprint() {}
 
@@ -79,16 +89,15 @@ final class ArgumentFingerprint {
             text(out, 'S', s);
         } else if (v instanceof Boolean || v instanceof Character || v instanceof Byte || v instanceof Short
                 || v instanceof Integer || v instanceof Long || v instanceof Float || v instanceof Double
-                || v instanceof BigInteger || v instanceof BigDecimal) {
+                || type == BigInteger.class || type == BigDecimal.class) {
             text(out, 'P', type.getName() + '=' + v);
         } else if (v instanceof Enum<?> e) {
             text(out, 'E', e.getDeclaringClass().getName() + '.' + e.name());
-        } else if (v instanceof UUID || v instanceof URI || type.getName().startsWith("java.time.")) {
+        } else if (type == UUID.class || type == URI.class || type == URL.class
+                || (type.getName().startsWith("java.time.") && type.getModule() == Object.class.getModule())) {
             text(out, 'V', type.getName() + '=' + v);
         } else if (v instanceof Class<?> c) {
             text(out, 'C', c.getName());
-        } else if (v instanceof CharSequence cs) {
-            text(out, 'S', cs.toString());
         } else if (type.isArray()) {
             enter(path, v);
             int n = Array.getLength(v);
@@ -106,12 +115,13 @@ final class ArgumentFingerprint {
             out.append('R').append(type.getName()).append('{');
             for (RecordComponent rc : type.getRecordComponents()) {
                 out.append(rc.getName()).append('=');
-                encode(out, component(rc, v), depth + 1, path);
+                encode(out, read(declaredField(type, rc.getName()), v), depth + 1, path);
                 out.append(',');
             }
             out.append('}');
             path.remove(v);
         } else if (v instanceof Map<?, ?> m) {
+            requireJdk(type, "map");
             enter(path, v);
             List<String> entries = new ArrayList<>(m.size());
             for (Map.Entry<?, ?> entry : m.entrySet()) {
@@ -127,6 +137,7 @@ final class ArgumentFingerprint {
             out.append('}');
             path.remove(v);
         } else if (v instanceof Set<?> s) {
+            requireJdk(type, "set");
             enter(path, v);
             List<String> items = new ArrayList<>(s.size());
             for (Object item : s) {
@@ -140,6 +151,7 @@ final class ArgumentFingerprint {
             out.append('}');
             path.remove(v);
         } else if (v instanceof Collection<?> c) {
+            requireJdk(type, "collection");
             enter(path, v);
             out.append('L').append(c.size()).append('[');
             for (Object item : c) {
@@ -148,51 +160,39 @@ final class ArgumentFingerprint {
             }
             out.append(']');
             path.remove(v);
+        } else if (isJdk(type)) {
+            throw new CheckpointKeyException(type.getName() + " is a JDK type outside the fingerprint's allow-list");
         } else {
-            encodeBean(out, v, type, depth, path);
+            encodeValueObject(out, v, type, depth, path);
         }
     }
 
-    /**
-     * A value object: its readable properties (as Jackson finds them), sorted by name, each
-     * encoded by these rules, so sets and maps inside it are order-independent too. A class
-     * that inherits {@code Object.equals} or {@code Object.hashCode} has identity semantics
-     * (a client, a session, a lambda): two calls with "the same" one cannot be told apart
-     * from two calls with different ones, so it is refused.
-     */
-    private static void encodeBean(StringBuilder out, Object v, Class<?> type, int depth, Set<Object> path) {
+    /** A value object, by its instance fields; never by calling its methods. */
+    private static void encodeValueObject(StringBuilder out, Object v, Class<?> type, int depth, Set<Object> path) {
         if (!hasValueSemantics(type)) {
             throw new CheckpointKeyException(type.getName() + " has identity semantics (no equals and hashCode of "
                     + "its own): a client, a session or a lambda cannot key a checkpoint. Pass the values it "
                     + "carries, make it a record, or give it equals and hashCode");
         }
-        List<BeanPropertyDefinition> props;
-        try {
-            BeanDescription desc = JSON.getSerializationConfig().introspect(JSON.constructType(type));
-            props = desc.findProperties().stream()
-                    .filter(BeanPropertyDefinition::couldSerialize)
-                    .filter(p -> p.getAccessor() != null)
-                    .sorted(java.util.Comparator.comparing(BeanPropertyDefinition::getName))
-                    .toList();
-        } catch (RuntimeException e) {
-            throw new CheckpointKeyException("cannot read the properties of " + type.getName() + ": " + e, e);
+        List<Field> fields = new ArrayList<>();
+        for (Class<?> k = type; k != Object.class; k = k.getSuperclass()) {
+            if (isJdk(k)) {
+                throw new CheckpointKeyException(type.getName() + " extends the JDK type " + k.getName()
+                        + ", whose state cannot be read safely");
+            }
+            for (Field f : k.getDeclaredFields()) {
+                int mod = f.getModifiers();
+                if (!Modifier.isStatic(mod) && !Modifier.isTransient(mod) && !f.isSynthetic()) {
+                    fields.add(f);
+                }
+            }
         }
-        if (props.isEmpty()) {
-            throw new CheckpointKeyException(type.getName() + " has no readable properties");
-        }
+        fields.sort(Comparator.comparing((Field f) -> f.getDeclaringClass().getName()).thenComparing(Field::getName));
         enter(path, v);
         out.append('B').append(type.getName()).append('{');
-        for (BeanPropertyDefinition p : props) {
-            AnnotatedMember accessor = p.getAccessor();
-            Object value;
-            try {
-                accessor.fixAccess(true);
-                value = accessor.getValue(v);
-            } catch (RuntimeException e) {
-                throw new CheckpointKeyException("cannot read " + type.getName() + "." + p.getName() + ": " + e, e);
-            }
-            out.append(p.getName()).append('=');
-            encode(out, value, depth + 1, path);
+        for (Field f : fields) {
+            out.append(f.getDeclaringClass().getName()).append('.').append(f.getName()).append('=');
+            encode(out, read(f, v), depth + 1, path);
             out.append(',');
         }
         out.append('}');
@@ -208,20 +208,46 @@ final class ArgumentFingerprint {
         }
     }
 
-    private static void enter(Set<Object> path, Object v) {
-        if (!path.add(v)) {
-            throw new CheckpointKeyException(v.getClass().getName() + " contains itself");
+    private static boolean isJdk(Class<?> type) {
+        String n = type.getName();
+        return n.startsWith("java.") || n.startsWith("javax.") || n.startsWith("jdk.")
+                || n.startsWith("sun.") || n.startsWith("com.sun.");
+    }
+
+    private static void requireJdk(Class<?> type, String what) {
+        if (!isJdk(type)) {
+            throw new CheckpointKeyException(type.getName() + " is a " + what + " implementation outside the JDK; "
+                    + "pass a java.util " + what);
         }
     }
 
-    private static Object component(RecordComponent rc, Object record) {
-        Method accessor = rc.getAccessor();
+    private static Field declaredField(Class<?> type, String name) {
         try {
-            accessor.trySetAccessible();
-            return accessor.invoke(record);
-        } catch (ReflectiveOperationException | RuntimeException e) {
-            throw new CheckpointKeyException("cannot read record component " + record.getClass().getName()
-                    + "." + rc.getName() + ": " + e, e);
+            return type.getDeclaredField(name);
+        } catch (NoSuchFieldException e) {
+            throw new CheckpointKeyException("record " + type.getName() + " has no field " + name, e);
+        }
+    }
+
+    private static Object read(Field f, Object owner) {
+        try {
+            if (!f.trySetAccessible()) {
+                throw new CheckpointKeyException("cannot read " + f.getDeclaringClass().getName() + "." + f.getName()
+                        + " (module not open to reflection)");
+            }
+            return f.get(owner);
+        } catch (IllegalAccessException | RuntimeException e) {
+            if (e instanceof CheckpointKeyException cke) {
+                throw cke;
+            }
+            throw new CheckpointKeyException("cannot read " + f.getDeclaringClass().getName() + "." + f.getName()
+                    + ": " + e, e);
+        }
+    }
+
+    private static void enter(Set<Object> path, Object v) {
+        if (!path.add(v)) {
+            throw new CheckpointKeyException(v.getClass().getName() + " contains itself");
         }
     }
 

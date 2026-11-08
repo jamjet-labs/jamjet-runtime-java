@@ -101,8 +101,9 @@ its outcome in the current `DurabilityContext`. A replayed call is matched by it
 and its position among calls with that name, so the second call in a loop replays the second
 result. The record also holds a fingerprint of the arguments: if a replayed call's arguments
 differ, it is refused with `CheckpointNondeterminismException` instead of returning another
-call's result or repeating the side effect. A call that threw an exception is recorded as a
-failure and replays by throwing it again; an `Error` or an interrupt is not recorded.
+call's result or repeating the side effect, and every later checkpoint call in that context
+refuses too. A call that threw an exception is recorded as a failure and replays by throwing
+it again.
 
 This means you can choose your level of explicitness:
 

@@ -137,14 +137,15 @@ class CheckpointReplaySafetyTest {
     }
 
     @Test
-    void anErrorIsNotRecorded() throws Exception {
+    void anErrorIsNotRecordedAsAnOutcome() throws Exception {
         Method m = getClass().getMethod("declinable", String.class);
         DurabilityContext ctx = DurabilityContext.create();
         DurabilityContext.setCurrent(ctx);
         Object entered = CheckpointRuntime.enter(m, new Object[]{"carol"});
         CheckpointRuntime.exit(entered, null, new OutOfMemoryError("transient"));
-        assertThat(ctx.getRecords()).isEmpty();
+        assertThat(ctx.getRecords()).singleElement().satisfies(r -> assertThat(r.indeterminate()).isTrue());
 
+        // where the run stopped: the outcome is unknown, so the call runs again
         ctx.setReplayMode(true);
         Object again = CheckpointRuntime.enter(m, new Object[]{"carol"});
         assertThat(again).as("the body runs again").isNotInstanceOf(CheckpointRuntime.Replayed.class);
@@ -157,7 +158,10 @@ class CheckpointReplaySafetyTest {
         DurabilityContext.setCurrent(ctx);
         Object entered = CheckpointRuntime.enter(m, new Object[]{"dave"});
         CheckpointRuntime.exit(entered, null, new InterruptedException("shutdown"));
-        assertThat(ctx.getRecords()).isEmpty();
+        assertThat(ctx.getRecords()).singleElement().satisfies(r -> {
+            assertThat(r.indeterminate()).isTrue();
+            assertThat(r.failureType()).isEqualTo("java.lang.InterruptedException");
+        });
     }
 
     @Test
@@ -184,7 +188,7 @@ class CheckpointReplaySafetyTest {
                 .isInstanceOf(CheckpointKeyException.class);
     }
 
-    /** No public constructor that takes a message: replay walks up to IllegalStateException. */
+    /** No public constructor that takes a message. */
     public static final class CodedDecline extends IllegalStateException {
         public CodedDecline(int code) {
             super("code " + code);
@@ -192,12 +196,11 @@ class CheckpointReplaySafetyTest {
     }
 
     @Test
-    void aFailureWhoseTypeCannotBeBuiltReplaysAsItsNearestBuildableSupertype() {
+    void aFailureWhoseExactTypeCannotBeBuiltReplaysAsCheckpointReplayException() {
         Throwable t = CheckpointRecord.failure("x#0@" + "0".repeat(32), CodedDecline.class.getName(), "code 7")
                 .replayFailure();
-        assertThat(t).isExactlyInstanceOf(IllegalStateException.class).hasMessage("code 7");
-        assertThat(t.getSuppressed()).singleElement().isInstanceOf(CheckpointReplayException.class)
-                .satisfies(m -> assertThat(((CheckpointReplayException) m).originalType()).isEqualTo(CodedDecline.class.getName()));
+        assertThat(t).isExactlyInstanceOf(CheckpointReplayException.class);
+        assertThat(((CheckpointReplayException) t).originalType()).isEqualTo(CodedDecline.class.getName());
     }
 
     @Test

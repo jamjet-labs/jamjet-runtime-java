@@ -21,15 +21,18 @@ import java.lang.annotation.Target;
  * that change between runs (random ids, the time) inside a checkpoint so they replay too.
  * </p>
  * <p>
- * Every argument must have a stable fingerprint: a value type, a record, a collection or
- * map of those, or an object with its own {@code equals} and {@code hashCode}. A client,
- * a session or a lambda passed as an argument is refused with
+ * Every argument must have a stable fingerprint: a JDK value type from a fixed list
+ * ({@code String}, numbers, enums, {@code UUID}, {@code URI}, {@code URL}, {@code java.time}),
+ * a record, a JDK collection or map of those, or your own object with {@code equals} and
+ * {@code hashCode} (read by its fields; no method is called). A client, a session, a lambda,
+ * or another JDK type is refused with
  * {@link dev.jamjet.runtime.instrument.CheckpointKeyException}; keep such objects in fields,
  * or call {@code DurabilityContext.replayOrExecute} with your own id.
  * </p>
  * <p>
- * A thrown {@link Exception} is recorded and replayed. An {@link Error} or an interrupt is not
- * recorded; a replay runs the call again.
+ * A thrown {@link Exception} is recorded and replayed. An {@link Error} or an interrupt is
+ * recorded as an indeterminate marker: replay throws it again where the first run went on
+ * past it, and runs the call again where the run stopped.
  * </p>
  */
 @Target(ElementType.METHOD)

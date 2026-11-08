@@ -29,15 +29,20 @@ import java.util.function.Supplier;
  * throws an {@link Exception} is recorded as a failure and replays by throwing again; it is
  * never replayed as a successful return.</p>
  *
- * <p>To persist a run, save each record's {@code id}, {@code failed} flag, and either its
- * {@code value} or its {@code failureType} and {@code failureMessage}; load them with
- * {@link #restore} ({@link CheckpointRecord#failure(String, String, String)} for a failure).
- * The id carries the argument fingerprint, so nothing else is needed. A restored failure
- * replays as an instance of its original exception class when that class can be loaded and
- * built from its message (otherwise the nearest superclass that can, with a suppressed
- * {@link CheckpointReplayException} naming the original), so {@code catch} blocks behave as
- * they did. Restore only records your own code saved: restoring builds exceptions by class
- * name.</p>
+ * <p>To persist a run, save each record's {@code id}, its {@code failed} and
+ * {@code indeterminate} flags, and either its {@code value} or its {@code failureType} and
+ * {@code failureMessage}; load them with {@link #restore}
+ * ({@link CheckpointRecord#failure(String, String, String)} for a failure,
+ * {@link CheckpointRecord#indeterminate(String, String, String)} for a marker). The id
+ * carries the argument fingerprint, so nothing else is needed. A restored failure replays as
+ * an instance of exactly its original class when that class can be loaded and built from
+ * its message; otherwise as {@link CheckpointReplayException}. It is never rebuilt as a
+ * superclass, which could send a {@code catch} down a different branch. Restore only records
+ * your own code saved: restoring builds exceptions by class name.</p>
+ *
+ * <p>A context whose replay diverged from its records (see
+ * {@link CheckpointNondeterminismException}) refuses every later checkpoint call. Start a
+ * fresh context, or one restored with only the records before the divergence.</p>
  *
  * <p>Records written by 0.4.0 under the old {@code @Checkpoint} ids ({@code Class.method} or
  * the bare {@code @Checkpoint} value) are not read as {@code @Checkpoint} records. In 0.4.0
@@ -64,6 +69,10 @@ public final class DurabilityContext {
     /** {@code name#n} of each {@code @Checkpoint} record to its full id. */
     private final Map<String, String> byPosition = new HashMap<>();
     private final Map<String, Integer> occurrences = new HashMap<>();
+    /** Highest recorded position per {@code @Checkpoint} scope. */
+    private final Map<String, Integer> lastPosition = new HashMap<>();
+    /** The first divergence from the recorded run, after which every checkpoint call refuses. */
+    private CheckpointNondeterminismException diverged;
     private static final java.util.regex.Pattern CHECKPOINT_ID =
             java.util.regex.Pattern.compile("(.*#\\d+)@[0-9a-f]{32}");
 
@@ -140,6 +149,7 @@ public final class DurabilityContext {
      */
     @SuppressWarnings("unchecked")
     public <T> T replayOrExecute(String checkpointId, Supplier<T> supplier) {
+        checkNotDiverged();
         CheckpointRecord recorded;
         synchronized (this) {
             recorded = replayMode ? records.get(checkpointId) : null;
@@ -183,8 +193,47 @@ public final class DurabilityContext {
         records.put(record.id(), record);
         java.util.regex.Matcher m = CHECKPOINT_ID.matcher(record.id());
         if (m.matches()) {
-            byPosition.put(m.group(1), record.id());
+            String position = m.group(1);
+            byPosition.put(position, record.id());
+            int hash = position.lastIndexOf('#');
+            lastPosition.merge(position.substring(0, hash), Integer.parseInt(position.substring(hash + 1)), Math::max);
         }
+    }
+
+    /** Whether a {@code @Checkpoint} record exists in {@code scope} at a position after {@code n}. */
+    synchronized boolean hasRecordAfter(String scope, int n) {
+        return lastPosition.getOrDefault(scope, -1) > n;
+    }
+
+    /**
+     * Marks this context as diverged from its recorded run and returns {@code first} to throw.
+     * Every later checkpoint call in this context throws too.
+     */
+    synchronized CheckpointNondeterminismException diverged(CheckpointNondeterminismException first) {
+        if (diverged == null) {
+            diverged = first;
+        }
+        return first;
+    }
+
+    /** Whether this context has diverged from its recorded run. */
+    public synchronized boolean hasDiverged() {
+        return diverged != null;
+    }
+
+    /** Throws when this context has diverged from its recorded run. */
+    synchronized void checkNotDiverged() {
+        if (diverged != null) {
+            throw new CheckpointNondeterminismException(diverged);
+        }
+    }
+
+    /**
+     * Records that the call under {@code checkpointId} threw {@code thrown}, which is not an
+     * outcome of the step (an {@link Error} or an interrupt). See {@link CheckpointRuntime}.
+     */
+    public void recordIndeterminate(String checkpointId, Throwable thrown) {
+        restore(CheckpointRecord.indeterminate(checkpointId, thrown));
     }
 
     /**

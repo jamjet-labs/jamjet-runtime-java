@@ -31,9 +31,12 @@ import java.util.stream.Collectors;
  * win. Use one context per run and thread, or {@code replayOrExecute} with your own ids.</p>
  *
  * <p>What is recorded: the return value, or an {@link Exception} the call threw. An
- * {@link Error} (out of memory, a stack overflow) and an interrupt
- * ({@link InterruptedException}, an interrupted I/O call) are not outcomes of the step and
- * are not recorded; they propagate, and a replay runs the call again.</p>
+ * {@link Error} (out of memory, a stack overflow) or an interrupt ({@link InterruptedException},
+ * an interrupted I/O call) is not an outcome of the step: it is recorded as an indeterminate
+ * marker. On replay, a marker the first run went past (later positions in its scope have
+ * records) throws the same throwable again, so the run takes the same path; a marker where
+ * the first run stopped lets the call run again. A position with no record while later
+ * positions have records is refused with {@link CheckpointNondeterminismException}.</p>
  */
 public final class CheckpointRuntime {
 
@@ -77,23 +80,38 @@ public final class CheckpointRuntime {
         if (ctx == null) {
             return null;
         }
+        ctx.checkNotDiverged();
         Pending outer = ACTIVE.get();
         String name = name(method);
         String fingerprint = ArgumentFingerprint.of(method, args);
         String scope = outer != null && outer.context == ctx ? outer.id + '/' + name : name;
-        String position = scope + '#' + ctx.nextOccurrence(scope);
+        int n = ctx.nextOccurrence(scope);
+        String position = scope + '#' + n;
         String id = position + '@' + fingerprint;
 
         if (ctx.isReplayMode()) {
             CheckpointRecord recorded = ctx.getRecordAtPosition(position);
-            if (recorded != null) {
+            if (recorded == null) {
+                if (ctx.hasRecordAfter(scope, n)) {
+                    // a hole: the first run got past this position without leaving a record
+                    throw ctx.diverged(new CheckpointNondeterminismException(position, null, id));
+                }
+            } else {
                 if (!recorded.id().equals(id)) {
-                    throw new CheckpointNondeterminismException(position, recorded.id(), id);
+                    throw ctx.diverged(new CheckpointNondeterminismException(position, recorded.id(), id));
                 }
-                if (recorded.failed()) {
+                if (recorded.indeterminate()) {
+                    // The call threw something that is not an outcome (an Error, an interrupt).
+                    // If the first run went on past it, take the same path again; if this is
+                    // where it stopped, its outcome is unknown and the call runs again.
+                    if (ctx.hasRecordAfter(scope, n)) {
+                        throw sneakyThrow(recorded.replayFailure());
+                    }
+                } else if (recorded.failed()) {
                     throw sneakyThrow(recorded.replayFailure());
+                } else {
+                    return new Replayed(recorded.value());
                 }
-                return new Replayed(recorded.value());
             }
         }
         Pending pending = new Pending(ctx, id, outer);
@@ -112,12 +130,14 @@ public final class CheckpointRuntime {
         }
         if (entered instanceof Pending pending) {
             try {
-                if (thrown != null) {
-                    if (recordable(thrown)) {
-                        pending.context.recordFailure(pending.id, thrown);
-                    }
-                } else {
+                if (pending.context.hasDiverged() || thrown instanceof CheckpointNondeterminismException) {
+                    // nothing from a run that left its recorded path is recorded
+                } else if (thrown == null) {
                     pending.context.recordResult(pending.id, returned);
+                } else if (recordable(thrown)) {
+                    pending.context.recordFailure(pending.id, thrown);
+                } else {
+                    pending.context.recordIndeterminate(pending.id, thrown);
                 }
             } finally {
                 if (pending.previous == null) {
