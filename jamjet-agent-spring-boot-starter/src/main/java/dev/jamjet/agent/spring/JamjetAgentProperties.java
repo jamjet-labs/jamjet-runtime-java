@@ -31,6 +31,9 @@ public class JamjetAgentProperties {
     /** The durable {@code java_tool} worker settings. */
     private Worker worker = new Worker();
 
+    /** The optional HTTP endpoint for deciding approvals. */
+    private Approvals approvals = new Approvals();
+
     public String getRuntimeUrl() {
         return runtimeUrl;
     }
@@ -61,6 +64,106 @@ public class JamjetAgentProperties {
 
     public void setWorker(Worker worker) {
         this.worker = worker;
+    }
+
+    public Approvals getApprovals() {
+        return approvals;
+    }
+
+    public void setApprovals(Approvals approvals) {
+        this.approvals = approvals;
+    }
+
+    /** One approver: an authenticated user name and the engine token to act with. */
+    public static class Approver {
+
+        /** The authenticated user name ({@code Principal.getName()}), matched exactly. */
+        private String user;
+
+        /** The engine token this user acts with. */
+        private String token;
+
+        public String getUser() {
+            return user;
+        }
+
+        public void setUser(String user) {
+            this.user = user;
+        }
+
+        public String getToken() {
+            return token;
+        }
+
+        public void setToken(String token) {
+            this.token = token;
+        }
+
+        @Override
+        public String toString() {
+            return "Approver[user=" + user + ", token=" + (token == null ? "unset" : "set") + "]";
+        }
+    }
+
+    /** Settings for the approval endpoint ({@code jamjet.agent.approvals.endpoint.*}). */
+    public static class Approvals {
+
+        private Endpoint endpoint = new Endpoint();
+
+        public Endpoint getEndpoint() {
+            return endpoint;
+        }
+
+        public void setEndpoint(Endpoint endpoint) {
+            this.endpoint = endpoint;
+        }
+
+        /**
+         * {@code GET {path}/executions/{id}/approvals} and
+         * {@code POST {path}/executions/{id}/approve}, for authenticated users, acting at the
+         * engine with each user's configured token. Off unless enabled.
+         */
+        public static class Endpoint {
+
+            /** Expose the endpoint (servlet web apps only). Off by default. */
+            private boolean enabled = false;
+
+            /** Path prefix for the endpoint. */
+            private String path = "/jamjet";
+
+            /**
+             * Who may decide approvals, and the engine token each acts with:
+             * {@code approvers[0].user=alice@corp.com}, {@code approvers[0].token=...}. A list
+             * of pairs rather than a map, because Spring Boot drops characters such as
+             * {@code @} from map keys. Each person needs their own token, not the
+             * application's.
+             */
+            private java.util.List<Approver> approvers = new java.util.ArrayList<>();
+
+            public java.util.List<Approver> getApprovers() {
+                return approvers;
+            }
+
+            public void setApprovers(java.util.List<Approver> approvers) {
+                this.approvers = approvers;
+            }
+
+            public boolean isEnabled() {
+                return enabled;
+            }
+
+            public void setEnabled(boolean enabled) {
+                this.enabled = enabled;
+            }
+
+            public String getPath() {
+                return path;
+            }
+
+            public void setPath(String path) {
+                this.path = path;
+            }
+        }
     }
 
     /**

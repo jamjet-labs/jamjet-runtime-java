@@ -138,6 +138,18 @@ class AgentIrCompilerTest {
     }
 
     @Test
+    void theApprovalDeadlineReachesTheCompiledIr() {
+        Agent a = Agent.builder("a1").model("gpt-4o").tools(new TestTools.WebSearchTool())
+                .policy(PolicySetIr.empty().withApprovalDeadline(3600, 600L))
+                .approvalRequired(List.of("delete_*"))
+                .build();
+        PolicySetIr policy = a.compileToIr(1).policy();
+        assertThat(policy.requireApprovalFor()).containsExactly("delete_*");
+        assertThat(policy.approvalTimeoutSecs()).isEqualTo(3600L);
+        assertThat(policy.escalateAfterSecs()).isEqualTo(600L);
+    }
+
+    @Test
     void emittedIrRoundTripsThroughTypedPort() throws Exception {
         // The emitted agent IR must survive a serialize -> deserialize through the
         // same typed WorkflowIr port the engine uses, with JavaFn tool nodes and
