@@ -87,8 +87,8 @@ public class Scheduler implements Runnable {
 
         for (WorkItem item : result.retryable()) {
             if (stalled(item.executionId())) {
-                // Not retried and nothing appended: the run is left as it is.
-                backend.moveToDeadLetter(item.id(), "run stalled: event log holds an event this build cannot read");
+                // Nothing appended: the run is left as it is. The item stays pending for a
+                // build that reads the whole log (workers of this build skip it).
                 continue;
             }
             long seq = backend.latestSequence(item.executionId()) + 1;

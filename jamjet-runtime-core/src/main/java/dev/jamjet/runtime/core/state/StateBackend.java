@@ -64,6 +64,26 @@ public interface StateBackend {
 
     Optional<WorkItem> claimWorkItem(String workerId, List<String> queueTypes) throws StateBackendException;
 
+    /**
+     * As {@link #claimWorkItem(String, List)}, skipping items of the {@code excluding}
+     * executions. A backend that does not implement this falls back to the plain claim
+     * (the caller may then release items it will not run).
+     */
+    default Optional<WorkItem> claimWorkItem(String workerId, List<String> queueTypes,
+                                             java.util.Set<ExecutionId> excluding) throws StateBackendException {
+        return claimWorkItem(workerId, queueTypes);
+    }
+
+    /**
+     * Returns an item {@code workerId} claimed to pending without charging an attempt, so
+     * another worker can run it.
+     *
+     * @throws UnsupportedOperationException when the backend cannot
+     */
+    default void releaseWorkItem(UUID itemId, String workerId) throws StateBackendException {
+        throw new UnsupportedOperationException("releaseWorkItem is not supported by " + getClass().getName());
+    }
+
     void renewLease(UUID itemId, String workerId) throws StateBackendException;
 
     void completeWorkItem(UUID itemId) throws StateBackendException;

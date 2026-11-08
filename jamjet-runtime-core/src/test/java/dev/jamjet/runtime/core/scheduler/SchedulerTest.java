@@ -172,7 +172,7 @@ class SchedulerTest {
         List<Event> events = backend.getEvents(execId);
         assertEquals(0, events.stream().filter(e -> e.kind() instanceof EventKind.RetryScheduled).count());
         assertEquals(0, events.stream().filter(e -> e.kind() instanceof EventKind.NodeFailed).count());
-        assertTrue(backend.claimWorkItem("worker-1", List.of("tool")).isEmpty(),
-                "the reclaimed item of a stalled run must not be queued again");
+        assertTrue(backend.claimWorkItem("worker-1", List.of("tool")).isPresent(),
+                "the reclaimed item stays queued for a build that reads the whole log");
     }
 }

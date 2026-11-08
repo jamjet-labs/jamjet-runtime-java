@@ -32,8 +32,10 @@ some event records gain components.
   fields for inspection. So does an unknown `queue_type` or approval `decision` inside a known
   kind (`QueueType.UNKNOWN`, `ApprovalDecision.UNKNOWN`). For a run whose log holds either:
   - the scheduler dispatches nothing and records `RunStalled` once;
-  - workers do not run its queued items, and dead-letter them without appending events;
-  - expired leases are not retried;
+  - workers of this build do not run its queued items. They return each one to pending
+    without charging an attempt, append nothing, and skip that execution from then on, so a
+    build that reads the whole log (or a Rust worker sharing the queue) can still run them;
+  - an expired lease of such a run appends no `NodeFailed` or `RetryScheduled`;
   - `StateMaterializer` reports `indeterminate = true`.
 - **Core (#17):** fields the Rust runtime added are now read instead of dropped:
   `WorkflowStarted.initiatedBy`, `NodeCompleted.idempotencyKey`, and

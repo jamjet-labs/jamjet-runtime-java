@@ -169,6 +169,12 @@ class WorkerTest {
 
         assertEquals(0, ran.get(), "a run whose log cannot be read must not execute work");
         assertEquals(1, backend.getEvents(execId).size(), "nothing may be appended to a stalled run");
-        assertFalse(worker.pollAndExecute(), "the refused item must not come back");
+        assertFalse(worker.pollAndExecute(), "this worker must not claim it again");
+
+        // the item is still there, attempt not charged, for a build (or a Rust worker) that
+        // reads the whole log
+        var other = backend.claimWorkItem("newer-build", List.of("tool"));
+        assertTrue(other.isPresent(), "a refused item must stay claimable by another worker");
+        assertEquals(1, other.get().attempt(), "refusing must not charge an attempt");
     }
 }
