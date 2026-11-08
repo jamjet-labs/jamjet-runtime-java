@@ -357,14 +357,23 @@ public class JdbcStateBackend implements StateBackend {
 
     @Override
     public Optional<WorkItem> claimWorkItem(String workerId, List<String> queueTypes) throws StateBackendException {
+        return claimWorkItem(workerId, queueTypes, java.util.Set.of());
+    }
+
+    @Override
+    public Optional<WorkItem> claimWorkItem(String workerId, List<String> queueTypes,
+                                            java.util.Set<ExecutionId> excluding) throws StateBackendException {
         if (queueTypes.isEmpty()) {
             return Optional.empty();
         }
 
         // Build IN clause placeholders
         String placeholders = String.join(",", queueTypes.stream().map(q -> "?").toList());
+        List<String> excluded = excluding.stream().map(e -> e.value().toString()).toList();
+        String exclusion = excluded.isEmpty() ? ""
+                : " AND execution_id NOT IN (" + String.join(",", excluded.stream().map(e -> "?").toList()) + ")";
         String selectSql = "SELECT * FROM work_items WHERE status = 'pending' AND queue_type IN ("
-                + placeholders + ") ORDER BY created_at LIMIT 1 FOR UPDATE";
+                + placeholders + ")" + exclusion + " ORDER BY created_at LIMIT 1 FOR UPDATE";
         String updateSql = "UPDATE work_items SET status = 'claimed', worker_id = ?, lease_expires_at = ? WHERE id = ?";
 
         try (Connection conn = dataSource.getConnection()) {
@@ -375,6 +384,9 @@ public class JdbcStateBackend implements StateBackend {
                     int idx = 1;
                     for (String qt : queueTypes) {
                         ps.setString(idx++, qt);
+                    }
+                    for (String ex : excluded) {
+                        ps.setString(idx++, ex);
                     }
                     try (ResultSet rs = ps.executeQuery()) {
                         if (rs.next()) {
@@ -446,6 +458,20 @@ public class JdbcStateBackend implements StateBackend {
             }
         } catch (SQLException e) {
             throw StateBackendException.database("Failed to complete work item", e);
+        }
+    }
+
+    @Override
+    public void releaseWorkItem(UUID itemId, String workerId) throws StateBackendException {
+        String sql = "UPDATE work_items SET status = 'pending', worker_id = NULL, lease_expires_at = NULL "
+                + "WHERE id = ? AND worker_id = ? AND status = 'claimed'";
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, itemId.toString());
+            ps.setString(2, workerId);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            throw StateBackendException.database("Failed to release work item " + itemId, e);
         }
     }
 

@@ -140,4 +140,39 @@ class SchedulerTest {
                         && ns.nodeId().equals("b"));
         assertTrue(hasBScheduled, "Should emit NodeScheduled for 'b' after 'a' completes");
     }
+
+    @Test
+    void aRunWithAnUnreadableEventIsNotAdvanced() throws Exception {
+        var ir = simpleWorkflow();
+        registerWorkflow(ir);
+        ExecutionId execId = startExecution("simple", "1");
+        backend.appendEvent(Event.create(execId, 2, new EventKind.Unknown()));
+
+        scheduler.tick();
+        scheduler.tick();
+
+        assertTrue(backend.claimWorkItem("worker-1", List.of(QueueType.TOOL.getValue())).isEmpty(),
+                "no work item may be dispatched for a run whose log cannot be read");
+        List<Event> events = backend.getEvents(execId);
+        assertEquals(1, events.stream().filter(e -> e.kind() instanceof EventKind.RunStalled).count());
+        assertEquals(0, events.stream().filter(e -> e.kind() instanceof EventKind.NodeScheduled).count());
+    }
+
+    @Test
+    void anExpiredLeaseOfAStalledRunIsNotRetried() throws Exception {
+        var ir = simpleWorkflow();
+        registerWorkflow(ir);
+        ExecutionId execId = startExecution("simple", "1");
+        backend.appendEvent(Event.create(execId, 2, new EventKind.Unknown()));
+        backend.enqueueWorkItem(new WorkItem(java.util.UUID.randomUUID(), execId, "a", "tool",
+                mapper.createObjectNode(), 1, 3, Instant.now(), Instant.now().minusSeconds(60), "gone-worker"));
+
+        scheduler.tick();
+
+        List<Event> events = backend.getEvents(execId);
+        assertEquals(0, events.stream().filter(e -> e.kind() instanceof EventKind.RetryScheduled).count());
+        assertEquals(0, events.stream().filter(e -> e.kind() instanceof EventKind.NodeFailed).count());
+        assertTrue(backend.claimWorkItem("worker-1", List.of("tool")).isPresent(),
+                "the reclaimed item stays queued for a build that reads the whole log");
+    }
 }

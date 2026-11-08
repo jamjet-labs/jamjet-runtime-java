@@ -20,13 +20,25 @@ public final class StateMaterializer {
     /**
      * Materialized view of workflow state, reconstructed from the event log.
      */
+    /**
+     * @param indeterminate the log holds an event this build cannot read (an unknown kind or
+     *                      approval decision). {@code status} is then only the fold of the
+     *                      events it can read, and must not be taken to mean the run is
+     *                      progressing: the scheduler and workers leave such a run as it is.
+     */
     public record MaterializedState(
             JsonNode currentState,
             WorkflowStatus status,
             Map<String, JsonNode> completedNodes,
             Set<String> activeNodes,
-            long lastSequence
-    ) {}
+            long lastSequence,
+            boolean indeterminate
+    ) {
+        public MaterializedState(JsonNode currentState, WorkflowStatus status, Map<String, JsonNode> completedNodes,
+                                 Set<String> activeNodes, long lastSequence) {
+            this(currentState, status, completedNodes, activeNodes, lastSequence, false);
+        }
+    }
 
     /**
      * Materialize the current state of an execution from its event log.
@@ -75,6 +87,7 @@ public final class StateMaterializer {
         Map<String, JsonNode> completedNodes = new HashMap<>();
         Set<String> activeNodes = new HashSet<>();
         long lastSequence = 0;
+        boolean indeterminate = false;
 
         for (Event event : events) {
             lastSequence = event.sequence();
@@ -115,6 +128,9 @@ public final class StateMaterializer {
                     }
                 }
 
+                case EventKind.ApprovalReceived ar when ar.decision() == dev.jamjet.runtime.core.event.ApprovalDecision.UNKNOWN ->
+                    indeterminate = true;
+
                 case EventKind.ApprovalReceived ar -> {
                     if (ar.statePatch() != null) {
                         jsonMergePatch(currentState, ar.statePatch());
@@ -122,13 +138,15 @@ public final class StateMaterializer {
                     status = WorkflowStatus.RUNNING;
                 }
 
+                case EventKind.Unknown unknown -> indeterminate = true;
+
                 default -> {
                     // No-op for all other event kinds
                 }
             }
         }
 
-        return new MaterializedState(currentState, status, completedNodes, activeNodes, lastSequence);
+        return new MaterializedState(currentState, status, completedNodes, activeNodes, lastSequence, indeterminate);
     }
 
     /**

@@ -203,8 +203,15 @@ public class InMemoryStateBackend implements StateBackend {
 
     @Override
     public synchronized Optional<WorkItem> claimWorkItem(String workerId, List<String> queueTypes) throws StateBackendException {
+        return claimWorkItem(workerId, queueTypes, java.util.Set.of());
+    }
+
+    @Override
+    public synchronized Optional<WorkItem> claimWorkItem(String workerId, List<String> queueTypes,
+                                                         java.util.Set<ExecutionId> excluding) throws StateBackendException {
         for (WorkItem item : workItems.values()) {
-            if (item.workerId() == null && queueTypes.contains(item.queueType())) {
+            if (item.workerId() == null && queueTypes.contains(item.queueType())
+                    && !excluding.contains(item.executionId())) {
                 Instant leaseExpires = Instant.now().plusSeconds(LEASE_DURATION_SECONDS);
                 WorkItem claimed = new WorkItem(
                         item.id(), item.executionId(), item.nodeId(), item.queueType(),
@@ -241,6 +248,21 @@ public class InMemoryStateBackend implements StateBackend {
         if (workItems.remove(itemId) == null) {
             throw StateBackendException.notFound(itemId.toString());
         }
+    }
+
+    @Override
+    public synchronized void releaseWorkItem(UUID itemId, String workerId) throws StateBackendException {
+        WorkItem item = workItems.get(itemId);
+        if (item == null) {
+            throw StateBackendException.notFound(itemId.toString());
+        }
+        if (!java.util.Objects.equals(item.workerId(), workerId)) {
+            return; // the lease moved on; nothing to release
+        }
+        workItems.put(itemId, new WorkItem(
+                item.id(), item.executionId(), item.nodeId(), item.queueType(),
+                item.payload(), item.attempt(), item.maxAttempts(),
+                item.createdAt(), null, null, item.tenantId()));
     }
 
     @Override

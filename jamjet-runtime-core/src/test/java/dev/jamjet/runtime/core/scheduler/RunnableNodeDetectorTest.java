@@ -172,4 +172,18 @@ class RunnableNodeDetectorTest {
         var runnable2 = RunnableNodeDetector.findRunnable(ir, events1);
         assertTrue(runnable2.contains("join"), "'join' should be runnable now");
     }
+
+    @Test
+    void nothingIsRunnableWhenTheLogHoldsAnUnreadableEvent() {
+        var ir = linearWorkflow();
+        var events = List.of(
+                event(1, new EventKind.NodeCompleted("a",
+                        JsonNodeFactory.instance.objectNode(), null, 100,
+                        null, null, null, null, null, null, null)),
+                event(2, new EventKind.Unknown())
+        );
+
+        assertTrue(RunnableNodeDetector.findRunnable(ir, events).isEmpty(),
+                "an unreadable event may be a cancellation; nothing may run");
+    }
 }

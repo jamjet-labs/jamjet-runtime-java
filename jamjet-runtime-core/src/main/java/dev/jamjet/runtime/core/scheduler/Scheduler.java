@@ -86,6 +86,11 @@ public class Scheduler implements Runnable {
         ReclaimResult result = backend.reclaimExpiredLeases();
 
         for (WorkItem item : result.retryable()) {
+            if (stalled(item.executionId())) {
+                // Nothing appended: the run is left as it is. The item stays pending for a
+                // build that reads the whole log (workers of this build skip it).
+                continue;
+            }
             long seq = backend.latestSequence(item.executionId()) + 1;
             backend.appendEvent(Event.create(item.executionId(), seq,
                     new EventKind.NodeFailed(item.nodeId(), "Lease expired", item.attempt(), true)));
@@ -94,11 +99,18 @@ public class Scheduler implements Runnable {
         }
 
         for (WorkItem item : result.exhausted()) {
+            if (stalled(item.executionId())) {
+                continue;
+            }
             long seq = backend.latestSequence(item.executionId()) + 1;
             backend.appendEvent(Event.create(item.executionId(), seq,
                     new EventKind.NodeFailed(item.nodeId(), "Lease expired — max attempts exhausted",
                             item.attempt(), false)));
         }
+    }
+
+    private boolean stalled(ExecutionId executionId) throws StateBackendException {
+        return RunnableNodeDetector.hasUnreadableEvent(backend.getEvents(executionId));
     }
 
     private void scheduleRunnableNodes(WorkflowExecution execution) throws Exception {
@@ -112,6 +124,10 @@ public class Scheduler implements Runnable {
 
         WorkflowIr ir = mapper.treeToValue(def.ir(), WorkflowIr.class);
         List<Event> events = backend.getEvents(execution.executionId());
+        if (RunnableNodeDetector.hasUnreadableEvent(events)) {
+            stall(execution, events);
+            return;
+        }
         var runnable = RunnableNodeDetector.findRunnable(ir, events);
 
         if (runnable.isEmpty()) {
@@ -163,6 +179,31 @@ public class Scheduler implements Runnable {
             backend.enqueueWorkItem(item);
             dispatched++;
         }
+    }
+
+    /**
+     * The log holds an event kind this build cannot read, so it cannot tell what the run
+     * may do next. Records {@link EventKind.RunStalled} once and leaves the run as it is,
+     * as the Rust scheduler does, until a build that reads the whole log takes over.
+     */
+    private void stall(WorkflowExecution execution, List<Event> events) throws StateBackendException {
+        for (Event event : events) {
+            if (event.kind() instanceof EventKind.RunStalled) {
+                return;
+            }
+        }
+        log.warn("Execution {} holds an event kind this build cannot read; not advancing it",
+                execution.executionId());
+        long seq = backend.latestSequence(execution.executionId()) + 1;
+        String unread = events.stream()
+                .map(Event::kind)
+                .filter(k -> k instanceof EventKind.Unknown)
+                .map(k -> ((EventKind.Unknown) k).originalType())
+                .distinct()
+                .collect(java.util.stream.Collectors.joining(", "));
+        backend.appendEvent(Event.create(execution.executionId(), seq,
+                new EventKind.RunStalled("event log holds an event this build cannot read"
+                        + (unread.isEmpty() ? " (an unknown approval decision)" : ": " + unread))));
     }
 
     private long countActiveNodes(List<Event> events) {

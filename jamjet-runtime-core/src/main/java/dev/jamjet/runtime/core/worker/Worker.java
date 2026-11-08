@@ -1,5 +1,11 @@
 package dev.jamjet.runtime.core.worker;
 
+import dev.jamjet.runtime.core.ExecutionId;
+
+import java.util.Set;
+
+import dev.jamjet.runtime.core.scheduler.RunnableNodeDetector;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.jamjet.runtime.core.JamjetJson;
@@ -35,6 +41,9 @@ public class Worker implements Runnable {
     private final NodeExecutorRegistry executorRegistry;
     private final List<String> queueTypes;
     private final Duration pollInterval;
+    /** Executions whose logs this build cannot read: their items are left for another worker. */
+    private final Set<ExecutionId> stalled = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     private volatile boolean running = true;
 
     public Worker(String workerId, StateBackend backend, NodeExecutorRegistry executorRegistry,
@@ -82,7 +91,7 @@ public class Worker implements Runnable {
      * @return true if an item was claimed and processed, false if the queue was empty
      */
     public boolean pollAndExecute() throws StateBackendException {
-        Optional<WorkItem> claimed = backend.claimWorkItem(workerId, queueTypes);
+        Optional<WorkItem> claimed = backend.claimWorkItem(workerId, queueTypes, Set.copyOf(stalled));
         if (claimed.isEmpty()) {
             return false;
         }
@@ -103,6 +112,24 @@ public class Worker implements Runnable {
         long startTime = System.currentTimeMillis();
 
         try {
+            // A run whose log holds something this build cannot read may have been cancelled
+            // or denied by it. Do not run its work and append nothing, as the scheduler does
+            // (RunStalled). The item goes back to pending without charging an attempt, so a
+            // build that reads the whole log, or a Rust worker sharing the queue, can still run
+            // it; this worker skips that execution's items from now on.
+            if (RunnableNodeDetector.hasUnreadableEvent(backend.getEvents(item.executionId()))) {
+                log.warn("Worker {} not running item {} of execution {}: its event log holds an event this "
+                        + "build cannot read", workerId, item.id(), item.executionId());
+                stalled.add(item.executionId());
+                try {
+                    backend.releaseWorkItem(item.id(), workerId);
+                } catch (UnsupportedOperationException e) {
+                    log.warn("Backend cannot release item {}; it returns to the queue when its lease expires",
+                            item.id());
+                }
+                return;
+            }
+
             // Emit NodeStarted
             long seq = backend.latestSequence(item.executionId()) + 1;
             backend.appendEvent(Event.create(item.executionId(), seq,

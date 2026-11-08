@@ -157,4 +157,27 @@ class JdbcStateBackendTest {
         // No more items at all
         assertThat(backend.claimWorkItem("w1", List.of("model"))).isEmpty();
     }
+
+    @Test
+    void aClaimCanSkipExecutionsAndAReleaseChargesNoAttempt() throws Exception {
+        var skipped = dev.jamjet.runtime.core.ExecutionId.create();
+        var other = dev.jamjet.runtime.core.ExecutionId.create();
+        java.time.Instant t0 = java.time.Instant.now().minusSeconds(10);
+        backend.enqueueWorkItem(new WorkItem(java.util.UUID.randomUUID(), skipped, "a", "tool",
+                mapper.createObjectNode(), 1, 3, t0, null, null));
+        backend.enqueueWorkItem(new WorkItem(java.util.UUID.randomUUID(), other, "b", "tool",
+                mapper.createObjectNode(), 1, 3, t0.plusSeconds(1), null, null));
+
+        var first = backend.claimWorkItem("w1", java.util.List.of("tool"), java.util.Set.of(skipped));
+        org.assertj.core.api.Assertions.assertThat(first).get().extracting(WorkItem::executionId).isEqualTo(other);
+
+        var claimed = backend.claimWorkItem("w1", java.util.List.of("tool"));
+        org.assertj.core.api.Assertions.assertThat(claimed).get().extracting(WorkItem::executionId).isEqualTo(skipped);
+        backend.releaseWorkItem(claimed.get().id(), "w1");
+        var again = backend.claimWorkItem("w2", java.util.List.of("tool"));
+        org.assertj.core.api.Assertions.assertThat(again).get().satisfies(i -> {
+            org.assertj.core.api.Assertions.assertThat(i.executionId()).isEqualTo(skipped);
+            org.assertj.core.api.Assertions.assertThat(i.attempt()).isEqualTo(1);
+        });
+    }
 }
