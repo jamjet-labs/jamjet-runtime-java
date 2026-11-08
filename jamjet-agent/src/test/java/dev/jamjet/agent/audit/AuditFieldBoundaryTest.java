@@ -131,4 +131,39 @@ class AuditFieldBoundaryTest {
         e.put("sequence", new JsonNumberText("-0"));
         assertThat(reason(e)).isEqualTo(AuditChainException.Reason.MALFORMED);
     }
+
+    static java.util.stream.Stream<String> hashedTextFields() {
+        return java.util.stream.Stream.of("execution_id", "event_type", "actor_id", "tool_call_hash",
+                "policy_decision", "http_request_id", "http_method", "http_path", "ip_address", "created_at",
+                "tenant_id", "expires_at");
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.MethodSource("hashedTextFields")
+    void theContentHashRefusesTheSeparatorInEveryTextField(String field) {
+        Map<String, Object> e = entry("token:7", "human");
+        e.put(field, field.endsWith("_at") ? "2026-10-03T04:00:01\u001fZ" : "a\u001fb");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> RuntimeAuditVerifier.entryContentHash(e, null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("U+001F");
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> RuntimeAuditVerifier.entryContentHash(entry("token:7", "human"), "ab\u001fcd"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"root", "Human", "SYSTEM", "", "human "})
+    void theContentHashRefusesAnActorTypeOutsideRustsEnum(String actorType) {
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> RuntimeAuditVerifier.entryContentHash(entry("token:7", actorType), null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("actor_type");
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"-0", "00", "01", "-01"})
+    void theContentHashRefusesANonCanonicalInteger(String spelling) {
+        Map<String, Object> e = entry("token:7", "human");
+        e.put("sequence", new JsonNumberText(spelling));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> RuntimeAuditVerifier.entryContentHash(e, null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("sequence");
+    }
 }

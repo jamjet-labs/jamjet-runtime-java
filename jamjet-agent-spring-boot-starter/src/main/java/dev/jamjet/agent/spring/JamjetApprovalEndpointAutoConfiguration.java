@@ -30,10 +30,23 @@ public class JamjetApprovalEndpointAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public ApproverTokenResolver jamjetApproverTokenResolver(JamjetAgentProperties properties) {
-        var tokens = properties.getApprovals().getEndpoint().getApproverTokens();
+        var approvers = properties.getApprovals().getEndpoint().getApprovers();
+        java.util.Map<String, String> tokens = new java.util.LinkedHashMap<>();
+        for (int i = 0; i < approvers.size(); i++) {
+            var a = approvers.get(i);
+            if (a == null || a.getUser() == null || a.getUser().isBlank()
+                    || a.getToken() == null || a.getToken().isBlank()) {
+                throw new IllegalStateException(
+                        "jamjet.agent.approvals.endpoint.approvers[" + i + "] needs both user and token");
+            }
+            if (tokens.putIfAbsent(a.getUser(), a.getToken()) != null) {
+                throw new IllegalStateException(
+                        "jamjet.agent.approvals.endpoint.approvers lists " + a.getUser() + " twice");
+            }
+        }
         if (tokens.isEmpty()) {
-            log.warn("JamJet approvals endpoint is enabled but no approver tokens are configured "
-                    + "(jamjet.agent.approvals.endpoint.approver-tokens.<user>); every request will be refused");
+            log.warn("JamJet approvals endpoint is enabled but no approvers are configured "
+                    + "(jamjet.agent.approvals.endpoint.approvers[n].user / .token); every request will be refused");
         }
         return ApproverTokenResolver.fromMap(tokens);
     }

@@ -39,6 +39,11 @@ import java.util.regex.Pattern;
  * the request carries. It checks on each request with an anonymous
  * {@code GET /executions?limit=1}.</p>
  *
+ * <p>A decision ({@code POST}) must carry the header {@code X-JamJet-Approval} (any
+ * non-blank value), or it gets 403. A cross-site form post cannot set a custom header
+ * without a CORS preflight, so a page on another origin cannot make a signed-in reviewer's
+ * browser decide.</p>
+ *
  * <p>An {@code approved} decision must carry the {@code action_digest} the reviewer was shown
  * (from the pending request's {@code context}); the engine refuses a stale one with 409. The
  * endpoint refuses an approval without one (400). An execution id must match
@@ -50,6 +55,9 @@ public class JamjetApprovalController {
 
     private static final Logger log = LoggerFactory.getLogger(JamjetApprovalController.class);
     private static final Pattern EXECUTION_ID = Pattern.compile("[A-Za-z0-9_-]{1,128}");
+
+    /** The custom header a decision must carry (CSRF: forces a CORS preflight cross-site). */
+    public static final String APPROVAL_HEADER = "X-JamJet-Approval";
 
     private final JamjetEngineClient engine;
     private final ApproverTokenResolver tokens;
@@ -76,7 +84,12 @@ public class JamjetApprovalController {
     public ResponseEntity<String> decide(
             @PathVariable("executionId") String executionId,
             @RequestBody(required = false) DecisionRequest body,
+            @org.springframework.web.bind.annotation.RequestHeader(value = APPROVAL_HEADER, required = false)
+            String approvalHeader,
             Principal principal) {
+        if (principal != null && blank(approvalHeader)) {
+            return error(HttpStatus.FORBIDDEN, "a decision needs the " + APPROVAL_HEADER + " header");
+        }
         return asApprover(principal, executionId, client -> {
             if (body == null || blank(body.decision())) {
                 return error(HttpStatus.BAD_REQUEST, "decision is required: approved or rejected");

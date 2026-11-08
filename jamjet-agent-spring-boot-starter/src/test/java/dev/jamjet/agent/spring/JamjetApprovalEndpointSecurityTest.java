@@ -72,12 +72,16 @@ class JamjetApprovalEndpointSecurityTest {
                         "jamjet.agent.bearer-token=app-token",
                         "jamjet.agent.worker.enabled=false",
                         "jamjet.agent.approvals.endpoint.enabled=true",
-                        "jamjet.agent.approvals.endpoint.approver-tokens.alice=alice-engine-token")
+                        "jamjet.agent.approvals.endpoint.approvers[0].user=alice",
+                        "jamjet.agent.approvals.endpoint.approvers[0].token=alice-engine-token",
+                        "jamjet.agent.approvals.endpoint.approvers[1].user=carol@corp.com",
+                        "jamjet.agent.approvals.endpoint.approvers[1].token=carol-engine-token")
                 .run(ctx -> test.accept(MockMvcBuilders.webAppContextSetup(ctx).build()));
     }
 
     private static MockHttpServletRequestBuilder approve() {
-        return MockMvcRequestBuilders.post("/jamjet/executions/ex_1/approve").contentType(MediaType.APPLICATION_JSON).content(APPROVE);
+        return MockMvcRequestBuilders.post("/jamjet/executions/ex_1/approve").contentType(MediaType.APPLICATION_JSON)
+                .header("X-JamJet-Approval", "1").content(APPROVE);
     }
 
     private static void perform(MockMvc mvc, MockHttpServletRequestBuilder req, int expected) {
@@ -118,5 +122,43 @@ class JamjetApprovalEndpointSecurityTest {
     @Test
     void anExecutionIdThatIsNotAnIdIsRefused() {
         withEndpoint(mvc -> perform(mvc, MockMvcRequestBuilders.get("/jamjet/executions/ex 1/approvals").principal(ALICE), 400));
+    }
+
+    @Test
+    void aUserNameWithPunctuationKeepsItsToken() {
+        Principal carol = () -> "carol@corp.com";
+        withEndpoint(mvc -> perform(mvc, approve().principal(carol), 200));
+        wm.verify(postRequestedFor(urlEqualTo("/executions/ex_1/approve"))
+                .withHeader("Authorization", equalTo("Bearer carol-engine-token")));
+    }
+
+
+    private static void startsWith(boolean fails, String... approvers) {
+        String[] props = new String[approvers.length + 2];
+        props[0] = "jamjet.agent.worker.enabled=false";
+        props[1] = "jamjet.agent.approvals.endpoint.enabled=true";
+        System.arraycopy(approvers, 0, props, 2, approvers.length);
+        new WebApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(JacksonAutoConfiguration.class,
+                        HttpMessageConvertersAutoConfiguration.class, WebMvcAutoConfiguration.class,
+                        JamjetAgentAutoConfiguration.class, JamjetApprovalEndpointAutoConfiguration.class))
+                .withPropertyValues(props)
+                .run(ctx -> {
+                    if (fails) {
+                        assertThat(ctx).hasFailed();
+                        assertThat(ctx.getStartupFailure()).rootCause().isInstanceOf(IllegalStateException.class);
+                    } else {
+                        assertThat(ctx).hasNotFailed();
+                    }
+                });
+    }
+
+    @Test
+    void aBadApproverListStopsStartup() {
+        String p = "jamjet.agent.approvals.endpoint.approvers";
+        startsWith(true, p + "[0].user=alice", p + "[0].token= ");
+        startsWith(true, p + "[0].user= ", p + "[0].token=t");
+        startsWith(true, p + "[0].user=alice", p + "[0].token=t1", p + "[1].user=alice", p + "[1].token=t2");
+        startsWith(false, p + "[0].user=alice", p + "[0].token=t1");
     }
 }

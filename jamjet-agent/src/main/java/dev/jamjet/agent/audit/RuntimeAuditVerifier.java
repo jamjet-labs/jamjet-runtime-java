@@ -84,6 +84,9 @@ import java.util.regex.Pattern;
  *       empty list, still verify. To detect truncation, compare the first entry's
  *       {@code prev_hash} and the last entry's {@code entry_hash} (or a count) with values
  *       you recorded out of band.</li>
+ *   <li>A key set accepts an entry signed by any listed key, at any time: it has no notion
+ *       of when a key was valid. After revoking a key, verify the entries written since then
+ *       against the keys valid then, not against a set that still lists the revoked one.</li>
  * </ul>
  */
 public final class RuntimeAuditVerifier {

@@ -74,6 +74,37 @@ public class JamjetAgentProperties {
         this.approvals = approvals;
     }
 
+    /** One approver: an authenticated user name and the engine token to act with. */
+    public static class Approver {
+
+        /** The authenticated user name ({@code Principal.getName()}), matched exactly. */
+        private String user;
+
+        /** The engine token this user acts with. */
+        private String token;
+
+        public String getUser() {
+            return user;
+        }
+
+        public void setUser(String user) {
+            this.user = user;
+        }
+
+        public String getToken() {
+            return token;
+        }
+
+        public void setToken(String token) {
+            this.token = token;
+        }
+
+        @Override
+        public String toString() {
+            return "Approver[user=" + user + ", token=" + (token == null ? "unset" : "set") + "]";
+        }
+    }
+
     /** Settings for the approval endpoint ({@code jamjet.agent.approvals.endpoint.*}). */
     public static class Approvals {
 
@@ -101,17 +132,20 @@ public class JamjetAgentProperties {
             private String path = "/jamjet";
 
             /**
-             * Engine token per authenticated user name, used to act at the engine for that
-             * user. Each person needs their own token, not the application's.
+             * Who may decide approvals, and the engine token each acts with:
+             * {@code approvers[0].user=alice@corp.com}, {@code approvers[0].token=...}. A list
+             * of pairs rather than a map, because Spring Boot drops characters such as
+             * {@code @} from map keys. Each person needs their own token, not the
+             * application's.
              */
-            private java.util.Map<String, String> approverTokens = new java.util.LinkedHashMap<>();
+            private java.util.List<Approver> approvers = new java.util.ArrayList<>();
 
-            public java.util.Map<String, String> getApproverTokens() {
-                return approverTokens;
+            public java.util.List<Approver> getApprovers() {
+                return approvers;
             }
 
-            public void setApproverTokens(java.util.Map<String, String> approverTokens) {
-                this.approverTokens = approverTokens;
+            public void setApprovers(java.util.List<Approver> approvers) {
+                this.approvers = approvers;
             }
 
             public boolean isEnabled() {

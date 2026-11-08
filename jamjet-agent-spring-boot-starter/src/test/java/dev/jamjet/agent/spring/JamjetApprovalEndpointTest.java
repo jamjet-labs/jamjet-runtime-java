@@ -91,9 +91,11 @@ class JamjetApprovalEndpointTest {
     @Test
     void anApprovalWithoutTheReviewedDigestIsRefusedHere() throws Exception {
         mvc.perform(request(POST, "/jamjet/executions/ex_1/approve").principal(ALICE)
+                        .header("X-JamJet-Approval", "1")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"decision\":\"approved\",\"node_id\":\"pay\"}"))
                 .andExpect(status().isBadRequest());
         mvc.perform(request(POST, "/jamjet/executions/ex_1/approve").principal(ALICE)
+                        .header("X-JamJet-Approval", "1")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"decision\":\"maybe\",\"node_id\":\"pay\"}"))
                 .andExpect(status().isBadRequest());
 
@@ -106,6 +108,7 @@ class JamjetApprovalEndpointTest {
                 "{\"execution_id\":\"ex_1\",\"node_id\":\"pay\",\"accepted\":true}")));
 
         mvc.perform(request(POST, "/jamjet/executions/ex_1/approve").principal(ALICE)
+                        .header("X-JamJet-Approval", "1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"decision\":\"approved\",\"node_id\":\"pay\",\"action_digest\":\"sha256:feed\","
                                 + "\"comment\":\"ok\"}"))
@@ -126,6 +129,7 @@ class JamjetApprovalEndpointTest {
                 .withBody("{\"error\":\"action_digest does not match the pending request\"}")));
 
         mvc.perform(request(POST, "/jamjet/executions/ex_1/approve").principal(ALICE)
+                        .header("X-JamJet-Approval", "1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"decision\":\"approved\",\"node_id\":\"pay\",\"action_digest\":\"sha256:old\"}"))
                 .andExpect(status().isConflict())
@@ -164,5 +168,25 @@ class JamjetApprovalEndpointTest {
         new ApplicationContextRunner().withConfiguration(CONFIGS)
                 .withPropertyValues("jamjet.agent.worker.enabled=false", "jamjet.agent.approvals.endpoint.enabled=true")
                 .run(ctx -> assertThat(ctx).doesNotHaveBean(JamjetApprovalController.class));
+    }
+
+    @Test
+    void anEngineAnsweringAnonymousRequestsIsRefused() throws Exception {
+        wm.stubFor(get(urlEqualTo("/executions?limit=1")).willReturn(okJson("[]")));
+        mvc.perform(request(GET, "/jamjet/executions/ex_1/approvals").principal(ALICE))
+                .andExpect(status().isServiceUnavailable());
+        assertThat(wm.findAll(getRequestedFor(urlEqualTo("/executions/ex_1/approvals")))).isEmpty();
+    }
+
+    @Test
+    void aDecisionWithoutTheApprovalHeaderIsRefused() throws Exception {
+        wm.stubFor(post(urlEqualTo("/executions/ex_1/approve")).willReturn(okJson(
+                "{\"execution_id\":\"ex_1\",\"node_id\":\"pay\",\"accepted\":true}")));
+        // a cross-site form post cannot set a custom header without a CORS preflight
+        mvc.perform(request(POST, "/jamjet/executions/ex_1/approve").principal(ALICE)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"decision\":\"approved\",\"node_id\":\"pay\",\"action_digest\":\"sha256:feed\"}"))
+                .andExpect(status().isForbidden());
+        assertThat(wm.findAll(postRequestedFor(anyUrl()))).isEmpty();
     }
 }
